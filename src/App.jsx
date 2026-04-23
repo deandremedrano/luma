@@ -124,6 +124,13 @@ const RECURRENCE_OPTIONS = [
   { value:"monthly", label:"Every month" }
 ];
 
+const GROWTH_CATEGORIES = [
+  { key:"career", label:"Career", color:"#0ea5e9", bg:"rgba(14,165,233,0.08)", icon:"◎" },
+  { key:"skills", label:"Skills", color:"#8b5cf6", bg:"rgba(139,92,246,0.08)", icon:"◈" },
+  { key:"interests", label:"Interests", color:"#00c896", bg:"rgba(0,200,150,0.08)", icon:"★" },
+  { key:"health", label:"Health", color:"#ec4899", bg:"rgba(236,72,153,0.08)", icon:"♡" }
+];
+
 function saveConversation(messages, profile) {
   if (!messages.length) return;
   try {
@@ -156,73 +163,44 @@ function shouldShowBriefing() {
 
 function scheduleReminder(task) {
   if (!task.reminderTime || !("Notification" in window)) return;
-  if (Notification.permission !== "granted") {
-    Notification.requestPermission().then(p => { if (p === "granted") scheduleReminder(task); });
-    return;
-  }
+  if (Notification.permission !== "granted") { Notification.requestPermission().then(p => { if (p === "granted") scheduleReminder(task); }); return; }
   const [hours, minutes] = task.reminderTime.split(":").map(Number);
   const now = new Date();
   const reminderDate = new Date();
   reminderDate.setHours(hours, minutes, 0, 0);
-  if (task.dueDate) {
-    const [year, month, day] = task.dueDate.split("-").map(Number);
-    reminderDate.setFullYear(year, month - 1, day);
-  }
+  if (task.dueDate) { const [year, month, day] = task.dueDate.split("-").map(Number); reminderDate.setFullYear(year, month - 1, day); }
   const delay = reminderDate.getTime() - now.getTime();
-  if (delay > 0) {
-    setTimeout(() => {
-      new Notification("Luma Reminder", {
-        body: task.text,
-        icon: "/favicon.ico",
-        tag: `luma-task-${task.id}`
-      });
-    }, delay);
-  }
+  if (delay > 0) setTimeout(() => new Notification("Luma Reminder", { body: task.text, icon: "/favicon.ico", tag: `luma-task-${task.id}` }), delay);
 }
 
 function scheduleDailyBriefingNotif(time, name) {
   if (!time || !("Notification" in window) || Notification.permission !== "granted") return;
   const [hours, minutes] = time.split(":").map(Number);
-  const now = new Date();
-  const next = new Date();
+  const now = new Date(); const next = new Date();
   next.setHours(hours, minutes, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
-  const delay = next.getTime() - now.getTime();
-  setTimeout(() => {
-    new Notification("Good morning from Luma", {
-      body: `Hey${name ? ` ${name}` : ""}! Your morning briefing is ready. Open Luma to start your day.`,
-      icon: "/favicon.ico",
-      tag: "luma-morning-briefing"
-    });
-    scheduleDailyBriefingNotif(time, name);
-  }, delay);
+  setTimeout(() => { new Notification("Good morning from Luma", { body: `Hey${name ? ` ${name}` : ""}! Your morning briefing is ready.`, icon: "/favicon.ico", tag: "luma-morning-briefing" }); scheduleDailyBriefingNotif(time, name); }, next.getTime() - now.getTime());
 }
 
 function scheduleCheckIn(hour, name) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
-  const now = new Date();
-  const next = new Date();
+  const now = new Date(); const next = new Date();
   next.setHours(hour, 0, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
-  const delay = next.getTime() - now.getTime();
-  setTimeout(() => {
-    new Notification("Luma is thinking of you", {
-      body: `Hey${name ? ` ${name}` : ""}. Just checking in — how are you doing today?`,
-      icon: "/favicon.ico",
-      tag: "luma-checkin"
-    });
-    scheduleCheckIn(hour, name);
-  }, delay);
+  setTimeout(() => { new Notification("Luma is thinking of you", { body: `Hey${name ? ` ${name}` : ""}. Just checking in — how are you doing today?`, icon: "/favicon.ico", tag: "luma-checkin" }); scheduleCheckIn(hour, name); }, next.getTime() - now.getTime());
 }
 
 export default function App() {
   const [screen, setScreen] = useState("home");
+  const [growthTab, setGrowthTab] = useState("career");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_profile")||"{}"); } catch { return {}; } });
   const [tasks, setTasks] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_tasks")||"[]"); } catch { return []; } });
   const [conversations, setConversations] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_conversations")||"[]"); } catch { return []; } });
+  const [growthData, setGrowthData] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_growth")||"{}"); } catch { return {}; } });
+  const [wins, setWins] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_wins")||"[]"); } catch { return []; } });
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileDraft, setProfileDraft] = useState(profile);
   const [ollamaStatus, setOllamaStatus] = useState("checking");
@@ -247,6 +225,13 @@ export default function App() {
   const [notifSettings, setNotifSettings] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_notif_settings")||"{}"); } catch { return {}; } });
   const [notifPermission, setNotifPermission] = useState(() => "Notification" in window ? Notification.permission : "unsupported");
   const [showNotifSettings, setShowNotifSettings] = useState(false);
+  const [showAddGoal, setShowAddGoal] = useState(false);
+  const [showAddWin, setShowAddWin] = useState(false);
+  const [newGoal, setNewGoal] = useState({ title:"", category:"career", description:"", targetDate:"", progress:0 });
+  const [newWin, setNewWin] = useState({ text:"", category:"career", date:"" });
+  const [growthInsight, setGrowthInsight] = useState("");
+  const [growthInsightLoading, setGrowthInsightLoading] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(null);
   const bottomRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -254,36 +239,23 @@ export default function App() {
   useEffect(() => { localStorage.setItem("luma_profile", JSON.stringify(profile)); }, [profile]);
   useEffect(() => { localStorage.setItem("luma_tasks", JSON.stringify(tasks)); }, [tasks]);
   useEffect(() => { localStorage.setItem("luma_notif_settings", JSON.stringify(notifSettings)); }, [notifSettings]);
+  useEffect(() => { localStorage.setItem("luma_growth", JSON.stringify(growthData)); }, [growthData]);
+  useEffect(() => { localStorage.setItem("luma_wins", JSON.stringify(wins)); }, [wins]);
   useEffect(() => { fetch("http://localhost:11434/api/tags").then(() => setOllamaStatus("online")).catch(() => setOllamaStatus("offline")); }, []);
-
+  useEffect(() => { if (!showOnboarding && profile.name && shouldShowBriefing() && ollamaStatus === "online") generateBriefing(); }, [showOnboarding, ollamaStatus]);
+  useEffect(() => { const h = () => { if (messages.length > 0) saveConversation(messages, profile); }; window.addEventListener("beforeunload", h); return () => window.removeEventListener("beforeunload", h); }, [messages, profile]);
   useEffect(() => {
-    if (!showOnboarding && profile.name && shouldShowBriefing() && ollamaStatus === "online") generateBriefing();
-  }, [showOnboarding, ollamaStatus]);
-
-  useEffect(() => {
-    const handleUnload = () => { if (messages.length > 0) saveConversation(messages, profile); };
-    window.addEventListener("beforeunload", handleUnload);
-    return () => window.removeEventListener("beforeunload", handleUnload);
-  }, [messages, profile]);
-
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().then(p => setNotifPermission(p));
-    }
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().then(p => setNotifPermission(p));
     tasks.filter(t => !t.done && t.reminderTime).forEach(scheduleReminder);
-    const settings = JSON.parse(localStorage.getItem("luma_notif_settings") || "{}");
-    if (settings.briefingEnabled && settings.briefingTime) scheduleDailyBriefingNotif(settings.briefingTime, profile.name);
-    if (settings.checkInEnabled && settings.checkInHour) scheduleCheckIn(parseInt(settings.checkInHour), profile.name);
+    const s = JSON.parse(localStorage.getItem("luma_notif_settings") || "{}");
+    if (s.briefingEnabled && s.briefingTime) scheduleDailyBriefingNotif(s.briefingTime, profile.name);
+    if (s.checkInEnabled && s.checkInHour) scheduleCheckIn(parseInt(s.checkInHour), profile.name);
   }, []);
-
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
       setTasks(prev => prev.map(task => {
-        if (!task.done && task.dueDate && !task.overdue) {
-          const due = new Date(`${task.dueDate}T${task.dueTime || "23:59"}`);
-          if (due < now) return { ...task, overdue:true };
-        }
+        if (!task.done && task.dueDate && !task.overdue) { const due = new Date(`${task.dueDate}T${task.dueTime || "23:59"}`); if (due < now) return { ...task, overdue:true }; }
         return task;
       }));
     }, 60000);
@@ -291,15 +263,11 @@ export default function App() {
   }, []);
 
   const generateBriefing = async () => {
-    setBriefingLoading(true);
-    setBriefing(null);
+    setBriefingLoading(true); setBriefing(null);
     const memoryContext = buildMemoryContext(conversations);
     const dayInfo = getDayInfo();
     try {
-      const res = await fetch(OLLAMA_URL, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:MORNING_BRIEFING_SYSTEM(profile, tasks, memoryContext, dayInfo) }], stream:false })
-      });
+      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:MORNING_BRIEFING_SYSTEM(profile, tasks, memoryContext, dayInfo) }], stream:false }) });
       const data = await res.json();
       setBriefing(data.message?.content || "Good morning! I'm here whenever you're ready.");
       localStorage.setItem("luma_last_briefing", new Date().toISOString());
@@ -307,150 +275,118 @@ export default function App() {
     setBriefingLoading(false);
   };
 
-  const suggestTasksFromGoals = async () => {
-    if (suggestingTasks) return;
-    setSuggestingTasks(true);
-    setSuggestedTasks([]);
+  const generateGrowthInsight = async () => {
+    setGrowthInsightLoading(true); setGrowthInsight("");
+    const goals = growthData[growthTab] || [];
+    const recentWins = wins.filter(w => w.category === growthTab).slice(0, 5);
     try {
       const res = await fetch(OLLAMA_URL, {
         method:"POST", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           model:"mistral-nemo:latest",
-          messages:[{ role:"user", content:`Based on this person's goals and profile, suggest 5 specific actionable tasks they should add to their list today. Return ONLY a JSON array like: ["task 1","task 2","task 3","task 4","task 5"]. No other text.
+          messages:[{ role:"user", content:`You are Luma, a warm personal AI coach. Give a short (3-4 sentence), specific, encouraging insight and ONE clear next step for this person's ${growthTab} growth.
 
 Name: ${profile.name || ""}
-Goals: ${profile.goals || ""}
+Goals in this area: ${goals.map(g => `${g.title} (${g.progress}% complete)`).join(", ") || "none set yet"}
+Recent wins: ${recentWins.map(w => w.text).join(", ") || "none logged yet"}
 Career: ${profile.career || ""}
+Overall goals: ${profile.goals || ""}
 Condition: ${profile.condition || "none"}
-Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` }],
+
+Be warm, specific, and genuinely helpful. Reference their actual goals and wins if available.` }],
           stream:false
         })
       });
       const data = await res.json();
-      const content = data.message?.content || "[]";
-      const match = content.match(/\[[\s\S]*?\]/);
+      setGrowthInsight(data.message?.content || "Keep going — every step forward counts.");
+    } catch { setGrowthInsight("Keep going — every step forward counts."); }
+    setGrowthInsightLoading(false);
+  };
+
+  const suggestTasksFromGoals = async () => {
+    if (suggestingTasks) return;
+    setSuggestingTasks(true); setSuggestedTasks([]);
+    try {
+      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:`Based on this person's goals and profile, suggest 5 specific actionable tasks. Return ONLY a JSON array: ["task 1","task 2","task 3","task 4","task 5"]. No other text.\nName: ${profile.name||""}\nGoals: ${profile.goals||""}\nCareer: ${profile.career||""}\nCondition: ${profile.condition||"none"}\nCurrent tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ")||"none"}` }], stream:false }) });
+      const data = await res.json();
+      const match = (data.message?.content || "[]").match(/\[[\s\S]*?\]/);
       if (match) setSuggestedTasks(JSON.parse(match[0]));
     } catch { setSuggestedTasks(["Check in with your goals today","Do one small thing toward your career","Take 5 minutes to plan your week","Reach out to someone important to you","Do something kind for yourself"]); }
     setSuggestingTasks(false);
   };
 
-  const addSuggestedTask = (text) => {
-    setTasks(prev => [...prev, { id:Date.now(), text, priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"", done:false, created:new Date().toLocaleDateString(), overdue:false }]);
-    setSuggestedTasks(prev => prev.filter(t => t !== text));
-  };
+  const addSuggestedTask = (text) => { setTasks(prev => [...prev, { id:Date.now(), text, priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"", done:false, created:new Date().toLocaleDateString(), overdue:false }]); setSuggestedTasks(prev => prev.filter(t => t !== text)); };
 
   const startListening = () => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) { alert("Voice requires Chrome."); return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     recognitionRef.current = new SR();
-    recognitionRef.current.continuous = false;
-    recognitionRef.current.interimResults = false;
-    recognitionRef.current.lang = "en-US";
+    recognitionRef.current.continuous = false; recognitionRef.current.interimResults = false; recognitionRef.current.lang = "en-US";
     recognitionRef.current.onstart = () => setIsListening(true);
     recognitionRef.current.onresult = (e) => { setInput(p => p+(p?" ":"")+e.results[0][0].transcript); setIsListening(false); };
     recognitionRef.current.onerror = () => setIsListening(false);
     recognitionRef.current.onend = () => setIsListening(false);
     recognitionRef.current.start();
   };
-
   const stopListening = () => { recognitionRef.current?.stop(); setIsListening(false); };
 
   const sendMessage = async (text) => {
-    const msg = text || "";
-    if (!msg.trim() || loading) return;
+    const msg = text || ""; if (!msg.trim() || loading) return;
     setInput("");
     const userMsg = { role:"user", content:msg };
     const updated = [...messages, userMsg];
-    setMessages(updated);
-    setLoading(true);
-    setScreen("chat");
+    setMessages(updated); setLoading(true); setScreen("chat");
     const memoryContext = buildMemoryContext(conversations);
     try {
-      const res = await fetch(OLLAMA_URL, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"system", content:LUMA_SYSTEM(profile, memoryContext) }, ...updated.slice(-MAX_MEMORY_MESSAGES)], stream:false })
-      });
+      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"system", content:LUMA_SYSTEM(profile, memoryContext) }, ...updated.slice(-MAX_MEMORY_MESSAGES)], stream:false }) });
       const data = await res.json();
       setMessages(prev => [...prev, { role:"assistant", content:data.message?.content || "Connection error." }]);
     } catch { setMessages(prev => [...prev, { role:"assistant", content:"Couldn't connect to Ollama." }]); }
     setLoading(false);
   };
 
-  const respondToBriefing = () => {
-    if (!briefing) return;
-    setMessages([{ role:"assistant", content:briefing }]);
-    setScreen("chat");
-    setBriefingDismissed(true);
-  };
-
-  const saveCurrentSession = () => {
-    if (messages.length === 0) return;
-    saveConversation(messages, profile);
-    setConversations(JSON.parse(localStorage.getItem("luma_conversations")||"[]"));
-    setSessionSaved(true);
-    setTimeout(() => setSessionSaved(false), 2000);
-  };
-
-  const clearCurrentChat = () => {
-    if (messages.length > 0) saveConversation(messages, profile);
-    setConversations(JSON.parse(localStorage.getItem("luma_conversations")||"[]"));
-    setMessages([]);
-  };
-
-  const deleteConversation = (id) => {
-    const updated = conversations.filter(c => c.id!==id);
-    setConversations(updated);
-    localStorage.setItem("luma_conversations", JSON.stringify(updated));
-  };
-
+  const respondToBriefing = () => { if (!briefing) return; setMessages([{ role:"assistant", content:briefing }]); setScreen("chat"); setBriefingDismissed(true); };
+  const saveCurrentSession = () => { if (messages.length === 0) return; saveConversation(messages, profile); setConversations(JSON.parse(localStorage.getItem("luma_conversations")||"[]")); setSessionSaved(true); setTimeout(() => setSessionSaved(false), 2000); };
+  const clearCurrentChat = () => { if (messages.length > 0) saveConversation(messages, profile); setConversations(JSON.parse(localStorage.getItem("luma_conversations")||"[]")); setMessages([]); };
+  const deleteConversation = (id) => { const u = conversations.filter(c => c.id!==id); setConversations(u); localStorage.setItem("luma_conversations", JSON.stringify(u)); };
   const loadConversation = (conv) => { setMessages(conv.messages); setScreen("chat"); setShowMemory(false); };
 
   const saveTask = () => {
     if (!newTask.text.trim()) return;
     const task = { ...newTask, id:editingTask?editingTask.id:Date.now(), done:editingTask?editingTask.done:false, created:editingTask?editingTask.created:new Date().toLocaleDateString(), overdue:false };
-    if (editingTask) { setTasks(prev => prev.map(t => t.id===editingTask.id?task:t)); }
-    else { setTasks(prev => [...prev, task]); }
+    if (editingTask) { setTasks(prev => prev.map(t => t.id===editingTask.id?task:t)); } else { setTasks(prev => [...prev, task]); }
     if (task.reminderTime && notifSettings.taskRemindersEnabled !== false) scheduleReminder(task);
-    setNewTask({ text:"", priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"" });
-    setShowAddTask(false);
-    setEditingTask(null);
+    setNewTask({ text:"", priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"" }); setShowAddTask(false); setEditingTask(null);
   };
-
-  const startEditTask = (task) => {
-    setNewTask({ text:task.text, priority:task.priority||"normal", dueDate:task.dueDate||"", dueTime:task.dueTime||"", reminderTime:task.reminderTime||"", recurrence:task.recurrence||"none", notes:task.notes||"" });
-    setEditingTask(task);
-    setShowAddTask(true);
-  };
-
-  const toggleTask = (id) => {
-    setTasks(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      const done = !t.done;
-      if (done && t.recurrence && t.recurrence !== "none" && t.dueDate) {
-        const due = new Date(t.dueDate);
-        if (t.recurrence === "daily") due.setDate(due.getDate()+1);
-        else if (t.recurrence === "weekdays") { due.setDate(due.getDate()+1); while([0,6].includes(due.getDay())) due.setDate(due.getDate()+1); }
-        else if (t.recurrence === "weekly") due.setDate(due.getDate()+7);
-        else if (t.recurrence === "monthly") due.setMonth(due.getMonth()+1);
-        return { ...t, done:false, dueDate:due.toISOString().split("T")[0], overdue:false };
-      }
-      return { ...t, done, overdue:false };
-    }));
-  };
-
+  const startEditTask = (task) => { setNewTask({ text:task.text, priority:task.priority||"normal", dueDate:task.dueDate||"", dueTime:task.dueTime||"", reminderTime:task.reminderTime||"", recurrence:task.recurrence||"none", notes:task.notes||"" }); setEditingTask(task); setShowAddTask(true); };
+  const toggleTask = (id) => { setTasks(prev => prev.map(t => { if (t.id!==id) return t; const done=!t.done; if (done&&t.recurrence&&t.recurrence!=="none"&&t.dueDate) { const due=new Date(t.dueDate); if(t.recurrence==="daily")due.setDate(due.getDate()+1); else if(t.recurrence==="weekdays"){due.setDate(due.getDate()+1);while([0,6].includes(due.getDay()))due.setDate(due.getDate()+1);} else if(t.recurrence==="weekly")due.setDate(due.getDate()+7); else if(t.recurrence==="monthly")due.setMonth(due.getMonth()+1); return {...t,done:false,dueDate:due.toISOString().split("T")[0],overdue:false}; } return {...t,done,overdue:false}; })); };
   const deleteTask = (id) => setTasks(prev => prev.filter(t => t.id!==id));
 
-  const nextOnboardingStep = () => {
-    const step = ONBOARDING_STEPS[onboardingStep];
-    const value = step.type==="select" ? onboardingSelect : onboardingInput;
-    const updated = { ...onboardingData, [step.key]:value };
-    setOnboardingData(updated);
-    setOnboardingInput("");
-    setOnboardingSelect("none");
-    if (onboardingStep < ONBOARDING_STEPS.length-1) { setOnboardingStep(s=>s+1); }
-    else { setProfile(updated); setShowOnboarding(false); }
+  const saveGoal = () => {
+    if (!newGoal.title.trim()) return;
+    const goal = { ...newGoal, id:editingGoal?editingGoal.id:Date.now(), created:editingGoal?editingGoal.created:new Date().toLocaleDateString() };
+    const existing = growthData[newGoal.category] || [];
+    if (editingGoal) { setGrowthData(p => ({ ...p, [newGoal.category]: existing.map(g => g.id===editingGoal.id?goal:g) })); }
+    else { setGrowthData(p => ({ ...p, [newGoal.category]: [...existing, goal] })); }
+    setNewGoal({ title:"", category:growthTab, description:"", targetDate:"", progress:0 }); setShowAddGoal(false); setEditingGoal(null);
   };
 
+  const updateGoalProgress = (category, id, progress) => { setGrowthData(p => ({ ...p, [category]: (p[category]||[]).map(g => g.id===id?{...g,progress}:g) })); };
+  const deleteGoal = (category, id) => { setGrowthData(p => ({ ...p, [category]: (p[category]||[]).filter(g => g.id!==id) })); };
+
+  const saveWin = () => {
+    if (!newWin.text.trim()) return;
+    const win = { ...newWin, id:Date.now(), date:newWin.date || new Date().toLocaleDateString(), created:new Date().toISOString() };
+    setWins(prev => [win, ...prev]);
+    setNewWin({ text:"", category:growthTab, date:"" }); setShowAddWin(false);
+  };
+  const deleteWin = (id) => setWins(prev => prev.filter(w => w.id!==id));
+
+  const nextOnboardingStep = () => {
+    const step = ONBOARDING_STEPS[onboardingStep]; const value = step.type==="select"?onboardingSelect:onboardingInput;
+    const updated = { ...onboardingData, [step.key]:value }; setOnboardingData(updated); setOnboardingInput(""); setOnboardingSelect("none");
+    if (onboardingStep < ONBOARDING_STEPS.length-1) { setOnboardingStep(s=>s+1); } else { setProfile(updated); setShowOnboarding(false); }
+  };
   const skipOnboarding = () => { setProfile(onboardingData); setShowOnboarding(false); };
   const saveProfile = () => { setProfile(profileDraft); setEditingProfile(false); };
 
@@ -461,6 +397,8 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
   const urgentCount = tasks.filter(t => !t.done && t.priority==="urgent").length;
   const todayCount = tasks.filter(t => !t.done && t.dueDate===new Date().toISOString().split("T")[0]).length;
   const overdueCount = tasks.filter(t => !t.done && t.overdue).length;
+  const totalGoals = Object.values(growthData).flat().length;
+  const totalWins = wins.length;
 
   const getFilteredTasks = () => {
     let filtered = tasks;
@@ -468,12 +406,12 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
     else if (taskFilter==="urgent") filtered = tasks.filter(t => !t.done && t.priority==="urgent");
     else if (taskFilter==="pending") filtered = tasks.filter(t => !t.done);
     else if (taskFilter==="done") filtered = tasks.filter(t => t.done);
-    return filtered.sort((a,b) => {
-      if (taskSort==="priority") { const o={urgent:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); }
-      if (taskSort==="due") return (a.dueDate||"9999")<(b.dueDate||"9999")?-1:1;
-      return 0;
-    });
+    return filtered.sort((a,b) => { if (taskSort==="priority") { const o={urgent:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); } if (taskSort==="due") return (a.dueDate||"9999")<(b.dueDate||"9999")?-1:1; return 0; });
   };
+
+  const currentCat = GROWTH_CATEGORIES.find(c => c.key === growthTab);
+  const currentGoals = growthData[growthTab] || [];
+  const currentWins = wins.filter(w => w.category === growthTab);
 
   return (
     <div style={{ minHeight:"100vh", background:"#f5f2ee", fontFamily:"'Nunito',-apple-system,sans-serif", color:"#1a1a1a", position:"relative", overflow:"hidden" }}>
@@ -491,6 +429,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         @keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,69,58,0.4)}50%{box-shadow:0 0 0 10px rgba(255,69,58,0)}}
         @keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
         @keyframes briefingIn{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes progressFill{from{width:0}to{width:var(--progress)}}
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:0;}
         ::placeholder{color:rgba(26,26,26,0.25);font-family:'Nunito',sans-serif;}
@@ -501,6 +440,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         .nav-btn:hover{color:#1a1a1a;background:rgba(26,26,26,0.06);}
         .nav-btn.active{color:#1a1a1a;background:rgba(26,26,26,0.08);}
         .card{background:rgba(255,255,255,0.75);border:0.5px solid rgba(26,26,26,0.07);border-radius:24px;backdrop-filter:blur(20px);transition:all 0.3s cubic-bezier(0.34,1.4,0.64,1);}
+        .card-hover:hover{background:rgba(255,255,255,0.92);transform:translateY(-2px);box-shadow:0 8px 40px rgba(0,0,0,0.06);}
         .input-wrap{background:rgba(255,255,255,0.75);border:0.5px solid rgba(26,26,26,0.09);border-radius:28px;backdrop-filter:blur(20px);transition:border-color 0.2s,box-shadow 0.2s;}
         .input-wrap:focus-within{border-color:rgba(26,26,26,0.15);box-shadow:0 4px 32px rgba(0,0,0,0.06);}
         .suggest-btn{background:rgba(255,255,255,0.6);border:0.5px solid rgba(26,26,26,0.07);border-radius:18px;padding:18px 22px;cursor:pointer;color:#1a1a1a;font-size:17px;font-weight:700;font-family:'Nunito',sans-serif;text-align:left;display:flex;align-items:center;justify-content:space-between;transition:all 0.25s;width:100%;}
@@ -512,6 +452,8 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         .task-row{transition:all 0.2s;}
         .task-row:hover .del-btn{opacity:1!important;}
         .task-row:hover .edit-btn{opacity:1!important;}
+        .goal-row:hover .goal-del{opacity:1!important;}
+        .win-row:hover .win-del{opacity:1!important;}
         .mem-card:hover .mem-del{opacity:1!important;}
         .pill-label{font-size:11px;font-weight:800;color:rgba(26,26,26,0.3);letter-spacing:0.1em;text-transform:uppercase;}
         .pill{display:inline-flex;align-items:center;gap:7px;padding:5px 14px;background:rgba(255,255,255,0.7);border:0.5px solid rgba(26,26,26,0.07);border-radius:100px;font-size:12px;font-weight:800;color:rgba(26,26,26,0.45);letter-spacing:0.06em;text-transform:uppercase;backdrop-filter:blur(10px);}
@@ -535,6 +477,11 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         .priority-btn{padding:8px 14px;border-radius:10px;border:0.5px solid;font-size:13px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;}
         .toggle{width:44px;height:26px;border-radius:100px;cursor:pointer;position:relative;transition:all 0.25s;flex-shrink:0;}
         .toggle-knob{position:absolute;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left 0.25s;box-shadow:0 1px 4px rgba(0,0,0,0.15);}
+        .progress-bar-bg{height:6px;background:rgba(26,26,26,0.08);border-radius:100px;overflow:hidden;}
+        .progress-bar-fill{height:100%;border-radius:100px;transition:width 0.5s ease;}
+        .growth-tab-btn{padding:8px 18px;border-radius:100px;border:0.5px solid rgba(26,26,26,0.09);background:rgba(255,255,255,0.6);font-size:14px;font-weight:700;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;display:flex;align-items:center;gap:6px;}
+        input[type="range"]{-webkit-appearance:none;width:100%;height:4px;border-radius:100px;outline:none;cursor:pointer;}
+        input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#00c896,#0ea5e9);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);}
       `}</style>
 
       {/* Aurora orbs */}
@@ -584,40 +531,81 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               <h2 style={{ fontSize:"22px", fontWeight:900, letterSpacing:"-0.02em" }}>{editingTask?"Edit Task":"New Task"}</h2>
               <button onClick={()=>{setShowAddTask(false);setEditingTask(null);setNewTask({text:"",priority:"normal",dueDate:"",dueTime:"",reminderTime:"",recurrence:"none",notes:""});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
             </div>
-            <div style={{ marginBottom:"20px" }}>
-              <label className="field-label">What needs to be done?</label>
-              <textarea value={newTask.text} onChange={e=>setNewTask(p=>({...p,text:e.target.value}))} placeholder="Describe your task — as small as you need it to be…" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} autoFocus />
-            </div>
-            <div style={{ marginBottom:"20px" }}>
-              <label className="field-label">Priority</label>
-              <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
-                {Object.entries(PRIORITY_CONFIG).map(([key,cfg])=>(
-                  <button key={key} className="priority-btn" onClick={()=>setNewTask(p=>({...p,priority:key}))} style={{ background:newTask.priority===key?cfg.bg:"transparent", borderColor:newTask.priority===key?cfg.border:"rgba(26,26,26,0.1)", color:newTask.priority===key?cfg.color:"rgba(26,26,26,0.4)" }}>{cfg.label}</button>
-                ))}
-              </div>
-            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">What needs to be done?</label><textarea value={newTask.text} onChange={e=>setNewTask(p=>({...p,text:e.target.value}))} placeholder="Describe your task…" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} autoFocus /></div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Priority</label><div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>{Object.entries(PRIORITY_CONFIG).map(([key,cfg])=><button key={key} className="priority-btn" onClick={()=>setNewTask(p=>({...p,priority:key}))} style={{ background:newTask.priority===key?cfg.bg:"transparent", borderColor:newTask.priority===key?cfg.border:"rgba(26,26,26,0.1)", color:newTask.priority===key?cfg.color:"rgba(26,26,26,0.4)" }}>{cfg.label}</button>)}</div></div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px", marginBottom:"20px" }}>
               <div><label className="field-label">Due Date</label><input type="date" value={newTask.dueDate} onChange={e=>setNewTask(p=>({...p,dueDate:e.target.value}))} className="field-input" /></div>
               <div><label className="field-label">Due Time</label><input type="time" value={newTask.dueTime} onChange={e=>setNewTask(p=>({...p,dueTime:e.target.value}))} className="field-input" /></div>
             </div>
-            <div style={{ marginBottom:"20px" }}>
-              <label className="field-label">Reminder Time</label>
-              <input type="time" value={newTask.reminderTime} onChange={e=>setNewTask(p=>({...p,reminderTime:e.target.value}))} className="field-input" />
-              <div style={{ fontSize:"12px", color:"rgba(26,26,26,0.3)", fontWeight:500, marginTop:"6px" }}>You'll get a browser notification at this time</div>
-            </div>
-            <div style={{ marginBottom:"20px" }}>
-              <label className="field-label">Repeat</label>
-              <select value={newTask.recurrence} onChange={e=>setNewTask(p=>({...p,recurrence:e.target.value}))} className="field-input" style={{ appearance:"none", cursor:"pointer" }}>
-                {RECURRENCE_OPTIONS.map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </select>
-            </div>
-            <div style={{ marginBottom:"28px" }}>
-              <label className="field-label">Notes (optional)</label>
-              <textarea value={newTask.notes} onChange={e=>setNewTask(p=>({...p,notes:e.target.value}))} placeholder="Any extra context…" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} />
-            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Reminder Time</label><input type="time" value={newTask.reminderTime} onChange={e=>setNewTask(p=>({...p,reminderTime:e.target.value}))} className="field-input" /><div style={{ fontSize:"12px", color:"rgba(26,26,26,0.3)", fontWeight:500, marginTop:"6px" }}>You'll get a browser notification at this time</div></div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Repeat</label><select value={newTask.recurrence} onChange={e=>setNewTask(p=>({...p,recurrence:e.target.value}))} className="field-input" style={{ appearance:"none", cursor:"pointer" }}>{RECURRENCE_OPTIONS.map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>
+            <div style={{ marginBottom:"28px" }}><label className="field-label">Notes (optional)</label><textarea value={newTask.notes} onChange={e=>setNewTask(p=>({...p,notes:e.target.value}))} placeholder="Any extra context…" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} /></div>
             <div style={{ display:"flex", gap:"10px" }}>
               <button onClick={saveTask} disabled={!newTask.text.trim()} style={{ flex:1, padding:"14px", background:newTask.text.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newTask.text.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newTask.text.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>{editingTask?"Save Changes":"Add Task"}</button>
               <button onClick={()=>{setShowAddTask(false);setEditingTask(null);}} style={{ padding:"14px 20px", background:"rgba(26,26,26,0.05)", border:"none", borderRadius:"16px", color:"rgba(26,26,26,0.4)", fontSize:"15px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Goal Modal */}
+      {showAddGoal && (
+        <div style={{ position:"fixed", inset:0, zIndex:150, background:"rgba(245,242,238,0.88)", backdropFilter:"blur(24px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px", animation:"fadeIn 0.3s ease" }}>
+          <div style={{ background:"rgba(255,255,255,0.92)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"32px", padding:"36px", maxWidth:"500px", width:"100%", animation:"slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)", maxHeight:"90vh", overflowY:"auto" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"28px" }}>
+              <h2 style={{ fontSize:"22px", fontWeight:900, letterSpacing:"-0.02em" }}>{editingGoal?"Edit Goal":"New Goal"}</h2>
+              <button onClick={()=>{setShowAddGoal(false);setEditingGoal(null);setNewGoal({title:"",category:growthTab,description:"",targetDate:"",progress:0});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
+            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Goal Title</label><input value={newGoal.title} onChange={e=>setNewGoal(p=>({...p,title:e.target.value}))} placeholder="What do you want to achieve?" className="field-input" autoFocus /></div>
+            <div style={{ marginBottom:"20px" }}>
+              <label className="field-label">Category</label>
+              <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
+                {GROWTH_CATEGORIES.map(cat=>(
+                  <button key={cat.key} onClick={()=>setNewGoal(p=>({...p,category:cat.key}))} style={{ padding:"8px 14px", borderRadius:"10px", border:`0.5px solid ${newGoal.category===cat.key?cat.color+"50":"rgba(26,26,26,0.1)"}`, background:newGoal.category===cat.key?cat.bg:"transparent", color:newGoal.category===cat.key?cat.color:"rgba(26,26,26,0.4)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
+                    {cat.icon} {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Description (optional)</label><textarea value={newGoal.description} onChange={e=>setNewGoal(p=>({...p,description:e.target.value}))} placeholder="What does success look like?" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} /></div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Target Date (optional)</label><input type="date" value={newGoal.targetDate} onChange={e=>setNewGoal(p=>({...p,targetDate:e.target.value}))} className="field-input" /></div>
+            <div style={{ marginBottom:"28px" }}>
+              <label className="field-label">Starting Progress — {newGoal.progress}%</label>
+              <input type="range" min="0" max="100" value={newGoal.progress} onChange={e=>setNewGoal(p=>({...p,progress:parseInt(e.target.value)}))} style={{ background:`linear-gradient(to right, #00c896 ${newGoal.progress}%, rgba(26,26,26,0.1) ${newGoal.progress}%)` }} />
+            </div>
+            <div style={{ display:"flex", gap:"10px" }}>
+              <button onClick={saveGoal} disabled={!newGoal.title.trim()} style={{ flex:1, padding:"14px", background:newGoal.title.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newGoal.title.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newGoal.title.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>{editingGoal?"Save Changes":"Add Goal"}</button>
+              <button onClick={()=>{setShowAddGoal(false);setEditingGoal(null);}} style={{ padding:"14px 20px", background:"rgba(26,26,26,0.05)", border:"none", borderRadius:"16px", color:"rgba(26,26,26,0.4)", fontSize:"15px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Win Modal */}
+      {showAddWin && (
+        <div style={{ position:"fixed", inset:0, zIndex:150, background:"rgba(245,242,238,0.88)", backdropFilter:"blur(24px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px", animation:"fadeIn 0.3s ease" }}>
+          <div style={{ background:"rgba(255,255,255,0.92)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"32px", padding:"36px", maxWidth:"480px", width:"100%", animation:"slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"28px" }}>
+              <h2 style={{ fontSize:"22px", fontWeight:900, letterSpacing:"-0.02em" }}>Log a Win</h2>
+<button onClick={()=>{setShowAddWin(false);setNewWin({text:"",category:growthTab,date:""});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>            </div>
+            <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"16px", padding:"14px 18px", marginBottom:"24px" }}>
+              <div style={{ fontSize:"14px", fontWeight:600, color:"#00a87c", lineHeight:1.6 }}>Every win counts — big or small. Getting out of bed, sending one email, finishing a task. All of it matters.</div>
+            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">What did you accomplish?</label><textarea value={newWin.text} onChange={e=>setNewWin(p=>({...p,text:e.target.value}))} placeholder="e.g. I finally sent that email I'd been putting off…" rows={3} className="field-input" style={{ resize:"none", lineHeight:1.5 }} autoFocus /></div>
+            <div style={{ marginBottom:"20px" }}>
+              <label className="field-label">Category</label>
+              <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
+                {GROWTH_CATEGORIES.map(cat=>(
+                  <button key={cat.key} onClick={()=>setNewWin(p=>({...p,category:cat.key}))} style={{ padding:"8px 14px", borderRadius:"10px", border:`0.5px solid ${newWin.category===cat.key?cat.color+"50":"rgba(26,26,26,0.1)"}`, background:newWin.category===cat.key?cat.bg:"transparent", color:newWin.category===cat.key?cat.color:"rgba(26,26,26,0.4)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
+                    {cat.icon} {cat.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom:"28px" }}><label className="field-label">Date (optional)</label><input type="date" value={newWin.date} onChange={e=>setNewWin(p=>({...p,date:e.target.value}))} className="field-input" /></div>
+            <div style={{ display:"flex", gap:"10px" }}>
+              <button onClick={saveWin} disabled={!newWin.text.trim()} style={{ flex:1, padding:"14px", background:newWin.text.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newWin.text.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newWin.text.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>Log this Win</button>
+              <button onClick={()=>setShowAddWin(false)} style={{ padding:"14px 20px", background:"rgba(26,26,26,0.05)", border:"none", borderRadius:"16px", color:"rgba(26,26,26,0.4)", fontSize:"15px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Cancel</button>
             </div>
           </div>
         </div>
@@ -632,10 +620,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
           </div>
           <p style={{ fontSize:"13px", color:"rgba(26,26,26,0.4)", fontWeight:500, lineHeight:1.6, marginBottom:"20px" }}>Luma remembers your past conversations for more personalized support.</p>
           {conversations.length===0 ? (
-            <div style={{ textAlign:"center", padding:"40px 0", color:"rgba(26,26,26,0.22)" }}>
-              <div style={{ fontSize:"15px", fontWeight:700, marginBottom:"8px" }}>No memories yet</div>
-              <div style={{ fontSize:"13px" }}>Start chatting and Luma will remember.</div>
-            </div>
+            <div style={{ textAlign:"center", padding:"40px 0", color:"rgba(26,26,26,0.22)" }}><div style={{ fontSize:"15px", fontWeight:700, marginBottom:"8px" }}>No memories yet</div><div style={{ fontSize:"13px" }}>Start chatting and Luma will remember.</div></div>
           ) : conversations.map(conv=>(
             <div key={conv.id} className="mem-card" onClick={()=>loadConversation(conv)}>
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"8px" }}>
@@ -659,10 +644,11 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
             <div style={{ width:7, height:7, borderRadius:"50%", background:ollamaStatus==="online"?"#00c896":"#ff453a", boxShadow:ollamaStatus==="online"?"0 0 8px rgba(0,200,150,0.5)":"0 0 8px rgba(255,69,58,0.5)" }} />
             <span style={{ fontSize:"13px", fontWeight:700, color:ollamaStatus==="online"?"#00a87c":"#ff453a" }}>{ollamaStatus==="online"?"Connected":"Offline"}</span>
           </div>
-          {[["home","Home"],["chat","Chat"],["tasks","Tasks"],["profile","Profile"]].map(([s,l])=>(
+          {[["home","Home"],["chat","Chat"],["tasks","Tasks"],["growth","Growth"],["profile","Profile"]].map(([s,l])=>(
             <button key={s} className={`nav-btn ${screen===s?"active":""}`} onClick={()=>setScreen(s)} style={{ position:"relative" }}>
               {l}
               {s==="tasks"&&(urgentCount>0||overdueCount>0)&&<span style={{ position:"absolute", top:"4px", right:"8px", width:"7px", height:"7px", borderRadius:"50%", background:"#ff453a" }} />}
+              {s==="growth"&&totalWins>0&&<span style={{ position:"absolute", top:"4px", right:"8px", width:"6px", height:"6px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)" }} />}
             </button>
           ))}
           <button className={`nav-btn ${showMemory?"active":""}`} onClick={()=>setShowMemory(m=>!m)} style={{ position:"relative" }}>
@@ -686,10 +672,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                   <button onClick={()=>setBriefingDismissed(true)} style={{ background:"none", border:"none", fontSize:"18px", color:"rgba(26,26,26,0.25)", cursor:"pointer" }}>×</button>
                 </div>
                 {briefingLoading ? (
-                  <div>
-                    {[75,90,65,80].map((w,i)=><div key={i} style={{ height:"14px", borderRadius:"8px", marginBottom:"10px", width:`${w}%` }} className="briefing-shimmer" />)}
-                    <div style={{ fontSize:"13px", fontWeight:600, color:"rgba(26,26,26,0.3)", marginTop:"12px" }}>Generating your morning briefing…</div>
-                  </div>
+                  <div>{[75,90,65,80].map((w,i)=><div key={i} style={{ height:"14px", borderRadius:"8px", marginBottom:"10px", width:`${w}%` }} className="briefing-shimmer" />)}<div style={{ fontSize:"13px", fontWeight:600, color:"rgba(26,26,26,0.3)", marginTop:"12px" }}>Generating your morning briefing…</div></div>
                 ) : (
                   <div>
                     <div style={{ fontSize:"16px", fontWeight:500, color:"#1a1a1a", lineHeight:1.72, whiteSpace:"pre-wrap", marginBottom:"20px" }}>{briefing}</div>
@@ -745,23 +728,36 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
             {tasks.filter(t=>!t.done).length>0&&(
               <div style={{ marginTop:"40px", animation:"fadeUp 0.6s ease 0.3s both" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
-                  <div className="pill-label">
-                    {urgentCount>0&&<span style={{ color:"#ff453a" }}>{urgentCount} urgent · </span>}
-                    {todayCount>0&&<span style={{ color:"#0ea5e9" }}>{todayCount} due today · </span>}
-                    {tasks.filter(t=>!t.done).length} total pending
-                  </div>
+                  <div className="pill-label">{urgentCount>0&&<span style={{ color:"#ff453a" }}>{urgentCount} urgent · </span>}{todayCount>0&&<span style={{ color:"#0ea5e9" }}>{todayCount} due today · </span>}{tasks.filter(t=>!t.done).length} total pending</div>
                   <button onClick={()=>setScreen("tasks")} style={{ fontSize:"13px", fontWeight:800, color:"rgba(26,26,26,0.3)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>See all</button>
                 </div>
                 {tasks.filter(t=>!t.done).sort((a,b)=>{const o={urgent:0,high:1,normal:2,low:3};return(o[a.priority]||2)-(o[b.priority]||2);}).slice(0,3).map(task=>{
                   const p=PRIORITY_CONFIG[task.priority||"normal"];
-                  return (
-                    <div key={task.id} style={{ display:"flex", alignItems:"center", gap:"12px", padding:"13px 18px", background:"rgba(255,255,255,0.72)", border:`0.5px solid ${task.overdue?"rgba(255,69,58,0.2)":"rgba(26,26,26,0.07)"}`, borderRadius:"16px", marginBottom:"8px", backdropFilter:"blur(20px)" }}>
-                      <div onClick={()=>toggleTask(task.id)} style={{ width:"20px", height:"20px", border:`2px solid ${p.color}40`, borderRadius:"7px", cursor:"pointer", flexShrink:0 }} />
-                      <span style={{ flex:1, fontSize:"15px", fontWeight:600, color:task.overdue?"#ff453a":"rgba(26,26,26,0.72)" }}>{task.text}</span>
-                      <span style={{ fontSize:"11px", fontWeight:800, color:p.color, background:p.bg, padding:"3px 8px", borderRadius:"6px" }}>{p.label}</span>
-                    </div>
-                  );
+                  return (<div key={task.id} style={{ display:"flex", alignItems:"center", gap:"12px", padding:"13px 18px", background:"rgba(255,255,255,0.72)", border:`0.5px solid ${task.overdue?"rgba(255,69,58,0.2)":"rgba(26,26,26,0.07)"}`, borderRadius:"16px", marginBottom:"8px", backdropFilter:"blur(20px)" }}>
+                    <div onClick={()=>toggleTask(task.id)} style={{ width:"20px", height:"20px", border:`2px solid ${p.color}40`, borderRadius:"7px", cursor:"pointer", flexShrink:0 }} />
+                    <span style={{ flex:1, fontSize:"15px", fontWeight:600, color:task.overdue?"#ff453a":"rgba(26,26,26,0.72)" }}>{task.text}</span>
+                    <span style={{ fontSize:"11px", fontWeight:800, color:p.color, background:p.bg, padding:"3px 8px", borderRadius:"6px" }}>{p.label}</span>
+                  </div>);
                 })}
+              </div>
+            )}
+            {/* Growth summary on home */}
+            {(totalGoals > 0 || totalWins > 0) && (
+              <div style={{ marginTop:"32px", animation:"fadeUp 0.6s ease 0.4s both" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
+                  <div className="pill-label">Growth</div>
+                  <button onClick={()=>setScreen("growth")} style={{ fontSize:"13px", fontWeight:800, color:"rgba(26,26,26,0.3)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>See all</button>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px" }}>
+                  <div style={{ background:"rgba(255,255,255,0.72)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"18px", padding:"16px 20px", backdropFilter:"blur(20px)", textAlign:"center" }}>
+                    <div style={{ fontSize:"28px", fontWeight:900, color:"#0ea5e9", letterSpacing:"-0.02em" }}>{totalGoals}</div>
+                    <div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.35)", marginTop:"2px" }}>Active Goals</div>
+                  </div>
+                  <div style={{ background:"rgba(255,255,255,0.72)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"18px", padding:"16px 20px", backdropFilter:"blur(20px)", textAlign:"center" }}>
+                    <div style={{ fontSize:"28px", fontWeight:900, color:"#00c896", letterSpacing:"-0.02em" }}>{totalWins}</div>
+                    <div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.35)", marginTop:"2px" }}>Wins Logged</div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -773,27 +769,14 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         <div style={{ display:"flex", flexDirection:"column", height:"100vh", paddingTop:"64px", position:"relative", zIndex:1 }}>
           <div style={{ flex:1, overflowY:"auto", padding:"32px 24px" }}>
             <div style={{ maxWidth:"720px", margin:"0 auto" }}>
-              {messages.length===0&&(
-                <div style={{ textAlign:"center", padding:"100px 0" }}>
-                  <div style={{ fontSize:"48px", fontWeight:900, marginBottom:"16px" }}><span className="aurora-text">Luma</span></div>
-                  <div style={{ fontSize:"18px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>I'm here. What's on your mind?</div>
-                  {conversations.length>0&&<div style={{ marginTop:"16px", fontSize:"14px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>I remember our past {conversations.length} conversation{conversations.length!==1?"s":""}.</div>}
-                </div>
-              )}
+              {messages.length===0&&(<div style={{ textAlign:"center", padding:"100px 0" }}><div style={{ fontSize:"48px", fontWeight:900, marginBottom:"16px" }}><span className="aurora-text">Luma</span></div><div style={{ fontSize:"18px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>I'm here. What's on your mind?</div>{conversations.length>0&&<div style={{ marginTop:"16px", fontSize:"14px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>I remember our past {conversations.length} conversation{conversations.length!==1?"s":""}.</div>}</div>)}
               {messages.map((m,i)=>(
                 <div key={i} style={{ marginBottom:"28px", display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp 0.35s ease" }}>
                   <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.22)", marginBottom:"8px", padding:m.role==="user"?"0 6px 0 0":"0 0 0 6px", letterSpacing:"0.08em" }}>{m.role==="user"?(profile.name||"YOU").toUpperCase():"LUMA"}</div>
                   <div style={{ maxWidth:"82%", padding:"16px 22px", borderRadius:m.role==="user"?"22px 22px 6px 22px":"6px 22px 22px 22px", background:m.role==="user"?"linear-gradient(135deg,rgba(0,200,150,0.1),rgba(14,165,233,0.1))":"rgba(255,255,255,0.82)", backdropFilter:"blur(20px)", border:m.role==="user"?"0.5px solid rgba(0,200,150,0.18)":"0.5px solid rgba(26,26,26,0.07)", color:"#1a1a1a", fontSize:"17px", lineHeight:1.72, whiteSpace:"pre-wrap", fontWeight:500, boxShadow:m.role!=="user"?"0 2px 16px rgba(0,0,0,0.04)":"none" }}>{m.content}</div>
                 </div>
               ))}
-              {loading&&(
-                <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-start", marginBottom:"28px" }}>
-                  <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.22)", marginBottom:"8px", paddingLeft:"6px", letterSpacing:"0.08em" }}>LUMA</div>
-                  <div style={{ padding:"16px 22px", background:"rgba(255,255,255,0.82)", backdropFilter:"blur(20px)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"6px 22px 22px 22px", display:"flex", gap:"7px", alignItems:"center" }}>
-                    {[0,0.22,0.44].map((d,i)=><div key={i} style={{ width:"8px", height:"8px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)", animation:`pulse 1.5s infinite ${d}s` }}/>)}
-                  </div>
-                </div>
-              )}
+              {loading&&(<div style={{ display:"flex", flexDirection:"column", alignItems:"flex-start", marginBottom:"28px" }}><div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.22)", marginBottom:"8px", paddingLeft:"6px", letterSpacing:"0.08em" }}>LUMA</div><div style={{ padding:"16px 22px", background:"rgba(255,255,255,0.82)", backdropFilter:"blur(20px)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"6px 22px 22px 22px", display:"flex", gap:"7px", alignItems:"center" }}>{[0,0.22,0.44].map((d,i)=><div key={i} style={{ width:"8px", height:"8px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)", animation:`pulse 1.5s infinite ${d}s` }}/>)}</div></div>)}
               <div ref={bottomRef}/>
             </div>
           </div>
@@ -837,12 +820,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               <button onClick={()=>{setNewTask({text:"",priority:"normal",dueDate:"",dueTime:"",reminderTime:"",recurrence:"none",notes:""});setEditingTask(null);setShowAddTask(true);}} style={{ padding:"12px 20px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:900, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>+ New Task</button>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"20px" }}>
-              {[
-                { label:"Total", value:tasks.length, color:"rgba(26,26,26,0.6)" },
-                { label:"Pending", value:tasks.filter(t=>!t.done).length, color:"#0ea5e9" },
-                { label:"Done", value:tasks.filter(t=>t.done).length, color:"#00c896" },
-                { label:"Urgent", value:urgentCount, color:"#ff453a" }
-              ].map(stat=>(
+              {[{label:"Total",value:tasks.length,color:"rgba(26,26,26,0.6)"},{label:"Pending",value:tasks.filter(t=>!t.done).length,color:"#0ea5e9"},{label:"Done",value:tasks.filter(t=>t.done).length,color:"#00c896"},{label:"Urgent",value:urgentCount,color:"#ff453a"}].map(stat=>(
                 <div key={stat.label} style={{ background:"rgba(255,255,255,0.72)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"16px", padding:"14px 16px", backdropFilter:"blur(20px)", textAlign:"center" }}>
                   <div style={{ fontSize:"24px", fontWeight:900, color:stat.color, letterSpacing:"-0.02em" }}>{stat.value}</div>
                   <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.3)", textTransform:"uppercase", letterSpacing:"0.06em", marginTop:"2px" }}>{stat.label}</div>
@@ -882,32 +860,151 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 <div style={{ fontSize:"15px" }}>{taskFilter==="today"?"Nothing due today — enjoy your day!":taskFilter==="urgent"?"No urgent tasks — you're doing great!":"Add one above or ask Luma to suggest some."}</div>
               </div>
             ) : getFilteredTasks().map(task=>{
-              const p=PRIORITY_CONFIG[task.priority||"normal"];
-              const isOverdue=!task.done&&task.overdue;
-              return (
-                <div key={task.id} className="task-row" style={{ background:"rgba(255,255,255,0.72)", border:`0.5px solid ${isOverdue?"rgba(255,69,58,0.2)":task.done?"rgba(26,26,26,0.05)":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"15px 18px", marginBottom:"8px", backdropFilter:"blur(20px)", display:"flex", alignItems:"flex-start", gap:"12px" }}>
-                  <div onClick={()=>toggleTask(task.id)} style={{ width:"22px", height:"22px", borderRadius:"7px", border:task.done?"none":`2px solid ${p.color}40`, background:task.done?"linear-gradient(135deg,#00c896,#0ea5e9)":"transparent", cursor:"pointer", flexShrink:0, marginTop:"2px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    {task.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              const p=PRIORITY_CONFIG[task.priority||"normal"]; const isOverdue=!task.done&&task.overdue;
+              return (<div key={task.id} className="task-row" style={{ background:"rgba(255,255,255,0.72)", border:`0.5px solid ${isOverdue?"rgba(255,69,58,0.2)":task.done?"rgba(26,26,26,0.05)":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"15px 18px", marginBottom:"8px", backdropFilter:"blur(20px)", display:"flex", alignItems:"flex-start", gap:"12px" }}>
+                <div onClick={()=>toggleTask(task.id)} style={{ width:"22px", height:"22px", borderRadius:"7px", border:task.done?"none":`2px solid ${p.color}40`, background:task.done?"linear-gradient(135deg,#00c896,#0ea5e9)":"transparent", cursor:"pointer", flexShrink:0, marginTop:"2px", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  {task.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap", marginBottom:"4px" }}>
+                    <span style={{ fontSize:"16px", fontWeight:600, color:task.done?"rgba(26,26,26,0.25)":isOverdue?"#ff453a":"rgba(26,26,26,0.82)", textDecoration:task.done?"line-through":"none" }}>{task.text}</span>
+                    {!task.done&&<span style={{ fontSize:"11px", fontWeight:800, color:p.color, background:p.bg, padding:"2px 8px", borderRadius:"6px", border:`0.5px solid ${p.border}`, whiteSpace:"nowrap" }}>{p.label}</span>}
+                    {task.recurrence&&task.recurrence!=="none"&&<span style={{ fontSize:"11px", fontWeight:700, color:"rgba(26,26,26,0.3)", background:"rgba(26,26,26,0.05)", padding:"2px 8px", borderRadius:"6px" }}>↺ {RECURRENCE_OPTIONS.find(r=>r.value===task.recurrence)?.label}</span>}
                   </div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap", marginBottom:"4px" }}>
-                      <span style={{ fontSize:"16px", fontWeight:600, color:task.done?"rgba(26,26,26,0.25)":isOverdue?"#ff453a":"rgba(26,26,26,0.82)", textDecoration:task.done?"line-through":"none" }}>{task.text}</span>
-                      {!task.done&&<span style={{ fontSize:"11px", fontWeight:800, color:p.color, background:p.bg, padding:"2px 8px", borderRadius:"6px", border:`0.5px solid ${p.border}`, whiteSpace:"nowrap" }}>{p.label}</span>}
-                      {task.recurrence&&task.recurrence!=="none"&&<span style={{ fontSize:"11px", fontWeight:700, color:"rgba(26,26,26,0.3)", background:"rgba(26,26,26,0.05)", padding:"2px 8px", borderRadius:"6px" }}>↺ {RECURRENCE_OPTIONS.find(r=>r.value===task.recurrence)?.label}</span>}
-                    </div>
-                    <div style={{ display:"flex", gap:"12px", flexWrap:"wrap" }}>
-                      {task.dueDate&&<span style={{ fontSize:"12px", fontWeight:600, color:isOverdue?"#ff453a":"rgba(26,26,26,0.35)" }}>{isOverdue?"Overdue · ":""}{task.dueDate}{task.dueTime?` at ${task.dueTime}`:""}</span>}
-                      {task.reminderTime&&<span style={{ fontSize:"12px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>Reminder {task.reminderTime}</span>}
-                      {task.notes&&<span style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.3)" }}>{task.notes.slice(0,50)}{task.notes.length>50?"…":""}</span>}
-                    </div>
-                  </div>
-                  <div style={{ display:"flex", gap:"4px", flexShrink:0 }}>
-                    <button className="edit-btn" onClick={()=>startEditTask(task)} style={{ opacity:0, background:"none", border:"none", color:"rgba(26,26,26,0.3)", cursor:"pointer", fontSize:"14px", padding:"4px 6px", transition:"opacity 0.2s", fontFamily:"'Nunito',sans-serif", fontWeight:700 }}>Edit</button>
-                    <button className="del-btn" onClick={()=>deleteTask(task.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"20px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
+                  <div style={{ display:"flex", gap:"12px", flexWrap:"wrap" }}>
+                    {task.dueDate&&<span style={{ fontSize:"12px", fontWeight:600, color:isOverdue?"#ff453a":"rgba(26,26,26,0.35)" }}>{isOverdue?"Overdue · ":""}{task.dueDate}{task.dueTime?` at ${task.dueTime}`:""}</span>}
+                    {task.reminderTime&&<span style={{ fontSize:"12px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>Reminder {task.reminderTime}</span>}
+                    {task.notes&&<span style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.3)" }}>{task.notes.slice(0,50)}{task.notes.length>50?"…":""}</span>}
                   </div>
                 </div>
-              );
+                <div style={{ display:"flex", gap:"4px", flexShrink:0 }}>
+                  <button className="edit-btn" onClick={()=>startEditTask(task)} style={{ opacity:0, background:"none", border:"none", color:"rgba(26,26,26,0.3)", cursor:"pointer", fontSize:"14px", padding:"4px 6px", transition:"opacity 0.2s", fontFamily:"'Nunito',sans-serif", fontWeight:700 }}>Edit</button>
+                  <button className="del-btn" onClick={()=>deleteTask(task.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"20px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
+                </div>
+              </div>);
             })}
+          </div>
+        </div>
+      )}
+
+      {/* GROWTH */}
+      {screen==="growth"&&(
+        <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
+          <div style={{ maxWidth:"720px", margin:"0 auto" }}>
+            <div style={{ marginBottom:"28px", animation:"fadeUp 0.5s ease" }}>
+              <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"8px" }}>Growth</h2>
+              <p style={{ fontSize:"17px", color:"rgba(26,26,26,0.36)", fontWeight:500 }}>Track your goals, log your wins, and see how far you've come.</p>
+            </div>
+
+            {/* Overall stats */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"24px" }}>
+              {GROWTH_CATEGORIES.map(cat=>{
+                const catGoals = growthData[cat.key] || [];
+                const catWins = wins.filter(w => w.category === cat.key);
+                return (
+                  <div key={cat.key} onClick={()=>setGrowthTab(cat.key)} style={{ background:growthTab===cat.key?cat.bg:"rgba(255,255,255,0.72)", border:`0.5px solid ${growthTab===cat.key?cat.color+"30":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"16px", backdropFilter:"blur(20px)", textAlign:"center", cursor:"pointer", transition:"all 0.25s" }}>
+                    <div style={{ fontSize:"22px", marginBottom:"4px" }}>{cat.icon}</div>
+                    <div style={{ fontSize:"13px", fontWeight:800, color:growthTab===cat.key?cat.color:"rgba(26,26,26,0.5)", marginBottom:"4px" }}>{cat.label}</div>
+                    <div style={{ fontSize:"11px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>{catGoals.length}G · {catWins.length}W</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Category tabs */}
+            <div style={{ display:"flex", gap:"8px", marginBottom:"24px", flexWrap:"wrap" }}>
+              {GROWTH_CATEGORIES.map(cat=>(
+                <button key={cat.key} className="growth-tab-btn" onClick={()=>setGrowthTab(cat.key)} style={{ background:growthTab===cat.key?cat.bg:"rgba(255,255,255,0.6)", borderColor:growthTab===cat.key?cat.color+"40":"rgba(26,26,26,0.09)", color:growthTab===cat.key?cat.color:"rgba(26,26,26,0.5)" }}>
+                  {cat.icon} {cat.label}
+                </button>
+              ))}
+            </div>
+
+            {/* AI Insight */}
+            <div style={{ background:"rgba(255,255,255,0.75)", border:`0.5px solid ${currentCat.color}20`, borderRadius:"22px", padding:"22px 24px", marginBottom:"20px", backdropFilter:"blur(20px)" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"12px" }}>
+                <div style={{ fontSize:"13px", fontWeight:800, color:currentCat.color, letterSpacing:"0.06em", textTransform:"uppercase" }}>Luma's {currentCat.label} Insight</div>
+                <button onClick={generateGrowthInsight} disabled={growthInsightLoading} style={{ padding:"7px 14px", background:currentCat.bg, border:`0.5px solid ${currentCat.color}30`, borderRadius:"10px", color:currentCat.color, fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
+                  {growthInsightLoading?"Thinking…":"Get Insight"}
+                </button>
+              </div>
+              {growthInsightLoading ? (
+                <div>{[80,65,90].map((w,i)=><div key={i} style={{ height:"13px", borderRadius:"8px", marginBottom:"8px", width:`${w}%` }} className="briefing-shimmer" />)}</div>
+              ) : growthInsight ? (
+                <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.72)", lineHeight:1.7, whiteSpace:"pre-wrap" }}>{growthInsight}</div>
+              ) : (
+                <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.35)", lineHeight:1.7 }}>Click "Get Insight" for personalized {currentCat.label.toLowerCase()} coaching from Luma.</div>
+              )}
+            </div>
+
+            {/* Goals section */}
+            <div style={{ marginBottom:"28px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
+                <div className="pill-label">{currentCat.label} Goals ({currentGoals.length})</div>
+                <button onClick={()=>{setNewGoal({title:"",category:growthTab,description:"",targetDate:"",progress:0});setEditingGoal(null);setShowAddGoal(true);}} style={{ padding:"8px 16px", background:`linear-gradient(135deg,${currentCat.color},${currentCat.color}cc)`, border:"none", borderRadius:"12px", color:"#fff", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>+ Add Goal</button>
+              </div>
+              {currentGoals.length===0 ? (
+                <div style={{ textAlign:"center", padding:"32px 0", color:"rgba(26,26,26,0.22)", background:"rgba(255,255,255,0.5)", borderRadius:"18px", border:"0.5px solid rgba(26,26,26,0.06)" }}>
+                  <div style={{ fontSize:"16px", fontWeight:700, marginBottom:"6px" }}>No {currentCat.label.toLowerCase()} goals yet</div>
+                  <div style={{ fontSize:"14px" }}>Add your first goal to start tracking your progress.</div>
+                </div>
+              ) : currentGoals.map(goal=>(
+                <div key={goal.id} className="goal-row" style={{ background:"rgba(255,255,255,0.75)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"18px", padding:"18px 20px", marginBottom:"10px", backdropFilter:"blur(20px)" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"10px" }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:"16px", fontWeight:800, color:"#1a1a1a", marginBottom:"4px" }}>{goal.title}</div>
+                      {goal.description&&<div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.45)", lineHeight:1.5, marginBottom:"4px" }}>{goal.description}</div>}
+                      {goal.targetDate&&<div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>Target: {goal.targetDate}</div>}
+                    </div>
+                    <div style={{ display:"flex", gap:"4px", marginLeft:"12px" }}>
+                      <button onClick={()=>{setNewGoal({title:goal.title,category:goal.category||growthTab,description:goal.description||"",targetDate:goal.targetDate||"",progress:goal.progress||0});setEditingGoal(goal);setShowAddGoal(true);}} style={{ background:"none", border:"none", color:"rgba(26,26,26,0.3)", cursor:"pointer", fontSize:"13px", fontWeight:700, padding:"4px 6px", fontFamily:"'Nunito',sans-serif" }}>Edit</button>
+                      <button className="goal-del" onClick={()=>deleteGoal(growthTab,goal.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"18px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:"12px" }}>
+                    <div style={{ flex:1 }}>
+                      <div className="progress-bar-bg">
+                        <div className="progress-bar-fill" style={{ width:`${goal.progress||0}%`, background:`linear-gradient(90deg,${currentCat.color},${currentCat.color}99)` }} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize:"13px", fontWeight:800, color:currentCat.color, minWidth:"36px", textAlign:"right" }}>{goal.progress||0}%</div>
+                  </div>
+                  <input type="range" min="0" max="100" value={goal.progress||0} onChange={e=>updateGoalProgress(growthTab,goal.id,parseInt(e.target.value))} style={{ width:"100%", marginTop:"8px", background:`linear-gradient(to right, ${currentCat.color} ${goal.progress||0}%, rgba(26,26,26,0.1) ${goal.progress||0}%)` }} />
+                </div>
+              ))}
+            </div>
+
+            {/* Wins Journal */}
+            <div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
+                <div className="pill-label">{currentCat.label} Wins ({currentWins.length})</div>
+                <button onClick={()=>{setNewWin({text:"",category:growthTab,date:""});setShowAddWin(true);}} style={{ padding:"8px 16px", background:"rgba(0,200,150,0.1)", border:"0.5px solid rgba(0,200,150,0.2)", borderRadius:"12px", color:"#00a87c", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>+ Log Win</button>
+              </div>
+              {currentWins.length===0 ? (
+                <div style={{ textAlign:"center", padding:"32px 0", color:"rgba(26,26,26,0.22)", background:"rgba(255,255,255,0.5)", borderRadius:"18px", border:"0.5px solid rgba(26,26,26,0.06)" }}>
+                  <div style={{ fontSize:"16px", fontWeight:700, marginBottom:"6px" }}>No wins logged yet</div>
+                  <div style={{ fontSize:"14px" }}>Every step counts. Log your first win — however small.</div>
+                </div>
+              ) : currentWins.map(win=>(
+                <div key={win.id} className="win-row" style={{ display:"flex", alignItems:"flex-start", gap:"12px", background:"rgba(0,200,150,0.05)", border:"0.5px solid rgba(0,200,150,0.12)", borderRadius:"16px", padding:"14px 18px", marginBottom:"8px" }}>
+                  <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:"#00c896", flexShrink:0, marginTop:"6px" }} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:"15px", fontWeight:600, color:"rgba(26,26,26,0.78)", lineHeight:1.5 }}>{win.text}</div>
+                    <div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)", marginTop:"4px" }}>{win.date}</div>
+                  </div>
+                  <button className="win-del" onClick={()=>deleteWin(win.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"18px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
+                </div>
+              ))}
+
+              {/* Ask Luma to reflect on wins */}
+              {currentWins.length > 0 && (
+                <button onClick={()=>sendMessage(`I want to reflect on my ${currentCat.label.toLowerCase()} wins and see how far I've come. Here are my recent wins: ${currentWins.slice(0,5).map(w=>w.text).join(", ")}. Please celebrate these with me and help me see my progress.`)} style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"13px 20px", background:"rgba(255,255,255,0.6)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"16px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", marginTop:"12px", width:"100%", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.92)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.6)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>
+                  Ask Luma to celebrate my progress with me
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -923,17 +1020,12 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               </div>
               <button onClick={()=>editingProfile?saveProfile():setEditingProfile(true)} style={{ padding:"12px 24px", background:editingProfile?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(255,255,255,0.75)", border:`0.5px solid ${editingProfile?"transparent":"rgba(26,26,26,0.1)"}`, borderRadius:"18px", color:editingProfile?"#fff":"#1a1a1a", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{editingProfile?"Save":"Edit"}</button>
             </div>
-
             {conversations.length>0&&(
               <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"20px", padding:"18px 22px", marginBottom:"16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                <div>
-                  <div style={{ fontSize:"13px", fontWeight:800, color:"#00a87c", marginBottom:"4px" }}>Luma remembers you</div>
-                  <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.5)" }}>{conversations.length} past conversation{conversations.length!==1?"s":""} saved locally</div>
-                </div>
+                <div><div style={{ fontSize:"13px", fontWeight:800, color:"#00a87c", marginBottom:"4px" }}>Luma remembers you</div><div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.5)" }}>{conversations.length} past conversation{conversations.length!==1?"s":""} saved locally</div></div>
                 <button onClick={()=>setShowMemory(true)} style={{ padding:"8px 16px", background:"rgba(0,200,150,0.12)", border:"0.5px solid rgba(0,200,150,0.2)", borderRadius:"12px", color:"#00a87c", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>View</button>
               </div>
             )}
-
             {[
               { key:"name", label:"Your Name", placeholder:"e.g. Deandre" },
               { key:"career", label:"Career and Role", placeholder:"e.g. QA Engineer, bioengineering background" },
@@ -947,7 +1039,6 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 {editingProfile?<input value={profileDraft[field.key]||""} onChange={e=>setProfileDraft(p=>({...p,[field.key]:e.target.value}))} placeholder={field.placeholder} style={{ width:"100%", background:"rgba(245,242,238,0.8)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"14px", padding:"12px 16px", color:"#1a1a1a", fontSize:"16px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }}/>:<div style={{ fontSize:"17px", fontWeight:600, color:profile[field.key]?"#1a1a1a":"rgba(26,26,26,0.22)" }}>{profile[field.key]||`Add your ${field.label.toLowerCase()}…`}</div>}
               </div>
             ))}
-
             <div className="card" style={{ borderRadius:"22px", padding:"22px 24px", marginBottom:"10px" }}>
               <div className="pill-label" style={{ marginBottom:"12px" }}>Condition or Challenge</div>
               {editingProfile?(
@@ -964,100 +1055,62 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               ):<div style={{ fontSize:"17px", fontWeight:600, color:profile.condition&&profile.condition!=="none"?conditionColors[profile.condition]:"rgba(26,26,26,0.22)" }}>{profile.condition&&profile.condition!=="none"?conditionLabels[profile.condition]:"Not set — always optional"}</div>}
               <div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.3)", marginTop:"10px", lineHeight:1.5 }}>Helps Luma adapt its communication style. 100% private — never leaves your device.</div>
             </div>
-
             <div className="card" style={{ borderRadius:"22px", padding:"24px", marginBottom:"10px" }}>
               <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)", marginBottom:"10px" }}>Luma knows you</div>
               <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.65, marginBottom:"20px" }}>The more you share, the more Luma adapts to your pace, your style, and exactly what you need.</div>
               <button onClick={()=>sendMessage("Based on my profile and our past conversations, what are the most helpful things you can do for me right now? Be specific and gentle.")} style={{ padding:"13px 22px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Ask Luma for personalized advice</button>
             </div>
-
-            {/* Notifications */}
             <div className="card" style={{ borderRadius:"22px", padding:"24px", marginBottom:"10px" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"6px" }}>
                 <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)" }}>Notifications</div>
-                <button onClick={async()=>{ if(notifPermission!=="granted"){const p=await Notification.requestPermission();setNotifPermission(p);} setShowNotifSettings(s=>!s); }} style={{ padding:"8px 16px", background:"rgba(26,26,26,0.05)", border:"0.5px solid rgba(26,26,26,0.09)", borderRadius:"12px", color:"rgba(26,26,26,0.5)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
-                  {showNotifSettings?"Done":"Configure"}
-                </button>
+                <button onClick={async()=>{ if(notifPermission!=="granted"){const p=await Notification.requestPermission();setNotifPermission(p);} setShowNotifSettings(s=>!s); }} style={{ padding:"8px 16px", background:"rgba(26,26,26,0.05)", border:"0.5px solid rgba(26,26,26,0.09)", borderRadius:"12px", color:"rgba(26,26,26,0.5)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{showNotifSettings?"Done":"Configure"}</button>
               </div>
-              <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.6, marginBottom:showNotifSettings?"20px":"0" }}>
-                {notifPermission==="granted"?"Notifications are enabled.":notifPermission==="denied"?"Notifications are blocked — enable them in your browser settings.":"Enable notifications to get reminders and check-ins from Luma."}
-              </div>
+              <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.6, marginBottom:showNotifSettings?"20px":"0" }}>{notifPermission==="granted"?"Notifications are enabled.":notifPermission==="denied"?"Notifications are blocked — enable them in your browser settings.":"Enable notifications to get reminders and check-ins from Luma."}</div>
               {showNotifSettings&&(
                 <div style={{ display:"flex", flexDirection:"column", gap:"16px" }}>
-                  {/* Permission status */}
                   <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"12px 16px", background:notifPermission==="granted"?"rgba(0,200,150,0.06)":"rgba(255,149,0,0.06)", border:`0.5px solid ${notifPermission==="granted"?"rgba(0,200,150,0.15)":"rgba(255,149,0,0.15)"}`, borderRadius:"14px" }}>
                     <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:notifPermission==="granted"?"#00c896":"#ff9500", flexShrink:0 }} />
-                    <span style={{ fontSize:"14px", fontWeight:700, color:notifPermission==="granted"?"#00a87c":"#cc7a00" }}>
-                      {notifPermission==="granted"?"Permission granted — notifications active":notifPermission==="denied"?"Permission denied — check browser settings":"Permission not yet requested"}
-                    </span>
-                    {notifPermission!=="granted"&&notifPermission!=="denied"&&(
-                      <button onClick={async()=>{const p=await Notification.requestPermission();setNotifPermission(p);}} style={{ marginLeft:"auto", padding:"6px 12px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"8px", color:"#fff", fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Enable</button>
-                    )}
+                    <span style={{ fontSize:"14px", fontWeight:700, color:notifPermission==="granted"?"#00a87c":"#cc7a00" }}>{notifPermission==="granted"?"Permission granted — notifications active":notifPermission==="denied"?"Permission denied — check browser settings":"Permission not yet requested"}</span>
+                    {notifPermission!=="granted"&&notifPermission!=="denied"&&<button onClick={async()=>{const p=await Notification.requestPermission();setNotifPermission(p);}} style={{ marginLeft:"auto", padding:"6px 12px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"8px", color:"#fff", fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Enable</button>}
                   </div>
-
-                  {/* Morning briefing */}
-                  <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: notifSettings.briefingEnabled?"14px":"0" }}>
-                      <div>
-                        <div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Morning Briefing</div>
-                        <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Daily reminder to open Luma and start your day</div>
+                  {[
+                    { key:"briefing", title:"Morning Briefing", desc:"Daily reminder to open Luma and start your day", hasTime:true, timeKey:"briefingTime", defaultTime:"08:00", onToggle:(e)=>{ setNotifSettings(p=>({...p,briefingEnabled:e})); if(e&&notifSettings.briefingTime)scheduleDailyBriefingNotif(notifSettings.briefingTime,profile.name); } },
+                  ].map(item=>(
+                    <div key={item.key} style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:notifSettings[`${item.key}Enabled`]&&item.hasTime?"14px":"0" }}>
+                        <div><div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>{item.title}</div><div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>{item.desc}</div></div>
+                        <div className="toggle" style={{ background:notifSettings[`${item.key}Enabled`]?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>item.onToggle(!notifSettings[`${item.key}Enabled`])}>
+                          <div className="toggle-knob" style={{ left:notifSettings[`${item.key}Enabled`]?"21px":"3px" }} />
+                        </div>
                       </div>
-                      <div className="toggle" style={{ background:notifSettings.briefingEnabled?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>{const e=!notifSettings.briefingEnabled;setNotifSettings(p=>({...p,briefingEnabled:e}));if(e&&notifSettings.briefingTime)scheduleDailyBriefingNotif(notifSettings.briefingTime,profile.name);}}>
-                        <div className="toggle-knob" style={{ left:notifSettings.briefingEnabled?"21px":"3px" }} />
-                      </div>
+                      {notifSettings[`${item.key}Enabled`]&&item.hasTime&&(
+                        <div><label className="field-label">Notify me at</label><input type="time" value={notifSettings[item.timeKey]||item.defaultTime} onChange={e=>{setNotifSettings(p=>({...p,[item.timeKey]:e.target.value}));if(notifSettings[`${item.key}Enabled`])scheduleDailyBriefingNotif(e.target.value,profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }} /></div>
+                      )}
                     </div>
-                    {notifSettings.briefingEnabled&&(
-                      <div>
-                        <label className="field-label">Notify me at</label>
-                        <input type="time" value={notifSettings.briefingTime||"08:00"} onChange={e=>{setNotifSettings(p=>({...p,briefingTime:e.target.value}));if(notifSettings.briefingEnabled)scheduleDailyBriefingNotif(e.target.value,profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Gentle check-in */}
+                  ))}
                   <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:notifSettings.checkInEnabled?"14px":"0" }}>
-                      <div>
-                        <div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Gentle Check-in</div>
-                        <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Luma checks in with you once a day</div>
-                      </div>
+                      <div><div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Gentle Check-in</div><div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Luma checks in with you once a day</div></div>
                       <div className="toggle" style={{ background:notifSettings.checkInEnabled?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>{const e=!notifSettings.checkInEnabled;setNotifSettings(p=>({...p,checkInEnabled:e}));if(e&&notifSettings.checkInHour)scheduleCheckIn(parseInt(notifSettings.checkInHour),profile.name);}}>
                         <div className="toggle-knob" style={{ left:notifSettings.checkInEnabled?"21px":"3px" }} />
                       </div>
                     </div>
-                    {notifSettings.checkInEnabled&&(
-                      <div>
-                        <label className="field-label">Check in at</label>
-                        <select value={notifSettings.checkInHour||"14"} onChange={e=>{setNotifSettings(p=>({...p,checkInHour:e.target.value}));if(notifSettings.checkInEnabled)scheduleCheckIn(parseInt(e.target.value),profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600, appearance:"none", cursor:"pointer" }}>
-                          {[{value:"9",label:"9:00 AM"},{value:"11",label:"11:00 AM"},{value:"13",label:"1:00 PM"},{value:"14",label:"2:00 PM"},{value:"16",label:"4:00 PM"},{value:"18",label:"6:00 PM"},{value:"20",label:"8:00 PM"}].map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                        </select>
-                      </div>
-                    )}
+                    {notifSettings.checkInEnabled&&(<div><label className="field-label">Check in at</label><select value={notifSettings.checkInHour||"14"} onChange={e=>{setNotifSettings(p=>({...p,checkInHour:e.target.value}));if(notifSettings.checkInEnabled)scheduleCheckIn(parseInt(e.target.value),profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600, appearance:"none", cursor:"pointer" }}>{[{value:"9",label:"9:00 AM"},{value:"11",label:"11:00 AM"},{value:"13",label:"1:00 PM"},{value:"14",label:"2:00 PM"},{value:"16",label:"4:00 PM"},{value:"18",label:"6:00 PM"},{value:"20",label:"8:00 PM"}].map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>)}
                   </div>
-
-                  {/* Task reminders toggle */}
                   <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                      <div>
-                        <div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Task Reminders</div>
-                        <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Notifications for individual task reminder times</div>
-                      </div>
-                      <div className="toggle" style={{ background:notifSettings.taskRemindersEnabled!==false?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>setNotifSettings(p=>({...p,taskRemindersEnabled:p.taskRemindersEnabled===false?true:false}))}>
+                      <div><div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Task Reminders</div><div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Notifications for individual task reminder times</div></div>
+                      <div className="toggle" style={{ background:notifSettings.taskRemindersEnabled!==false?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>setNotifSettings(p=>({...p,taskRemindersEnabled:p.taskRemindersEnabled===false}))}>
                         <div className="toggle-knob" style={{ left:notifSettings.taskRemindersEnabled!==false?"21px":"3px" }} />
                       </div>
                     </div>
                   </div>
-
-                  {/* Test notification */}
-                  <button onClick={()=>{ if(notifPermission==="granted") new Notification("Hey from Luma!",{body:`Just making sure notifications are working for you${profile.name?`, ${profile.name}`:""}`,icon:"/favicon.ico",tag:"luma-test"}); }} style={{ padding:"12px", background:"rgba(26,26,26,0.04)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"14px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", width:"100%", transition:"all 0.2s" }}
+                  <button onClick={()=>{ if(notifPermission==="granted") new Notification("Hey from Luma!",{body:`Just making sure notifications are working${profile.name?`, ${profile.name}`:""}!`,icon:"/favicon.ico",tag:"luma-test"}); }} style={{ padding:"12px", background:"rgba(26,26,26,0.04)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"14px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", width:"100%", transition:"all 0.2s" }}
                     onMouseEnter={e=>{e.currentTarget.style.background="rgba(26,26,26,0.08)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}}
-                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(26,26,26,0.04)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>
-                    Send a test notification
-                  </button>
+                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(26,26,26,0.04)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>Send a test notification</button>
                 </div>
               )}
             </div>
-
             <div style={{ textAlign:"center", marginTop:"24px", paddingBottom:"8px" }}>
               <button onClick={()=>{setShowOnboarding(true);setOnboardingStep(0);setOnboardingInput("");setOnboardingData({});}} style={{ fontSize:"13px", fontWeight:700, color:"rgba(26,26,26,0.22)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Redo onboarding</button>
             </div>
