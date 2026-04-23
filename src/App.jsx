@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 
 const OLLAMA_URL = "http://localhost:11434/api/chat";
+const MAX_MEMORY_MESSAGES = 50;
+const MAX_SUMMARY_MESSAGES = 10;
 
-const LUMA_SYSTEM = (profile) => {
+const LUMA_SYSTEM = (profile, memoryContext) => {
   const conditionGuidance = {
     adhd: "The user has ADHD. Use SHORT paragraphs. Be energetic and direct. Break everything into bullet points. Celebrate momentum. Never give long walls of text. End with ONE specific next action.",
     anxiety: "The user has anxiety. Be calm, structured, and reassuring. Always explain your reasoning. No surprises. Validate feelings first. Provide structured options.",
@@ -12,8 +14,10 @@ const LUMA_SYSTEM = (profile) => {
     ptsd: "The user has PTSD. Be gentle. Never use triggering language. Always ask before giving advice. Respect boundaries. Focus on safety and grounding first.",
     general: ""
   };
+
   const condition = profile.condition || "general";
   const conditionNote = conditionGuidance[condition] || "";
+
   return `You are Luma, a warm, intelligent, deeply personal AI life companion and the most caring support system anyone has ever had.
 
 ${conditionNote}
@@ -22,12 +26,19 @@ Your core personality:
 - Genuinely warm and caring — like a best friend who happens to be very wise
 - Adaptive — you change your communication style completely based on the user's needs
 - Honest but kind — you give real help, not just validation
-- Proactive — you ask the right questions to understand what someone actually needs
+- Proactive — you notice patterns across conversations and bring them up naturally
 - Comfort and success are your only goals
+
+MEMORY RULES — CRITICAL:
+- You have access to the user's conversation history below
+- Reference past conversations naturally — like a friend who remembers
+- If you notice patterns (recurring stress, consistent goals, repeated topics) mention them gently
+- Never make the user feel surveilled — use memory warmly, not clinically
+- If they mentioned something important last time, ask about it naturally
 
 IMPORTANT RULES:
 - Always ask one gentle question first to understand how the person is doing TODAY
-- Celebrate every win no matter how small — getting out of bed counts
+- Celebrate every win no matter how small
 - Never shame, never pressure, never overwhelm
 - If someone seems to be struggling emotionally, address that FIRST
 - Break every task into the smallest possible step
@@ -40,7 +51,12 @@ ${profile.career ? `Career: ${profile.career}` : ""}
 ${profile.interests ? `Interests: ${profile.interests}` : ""}
 ${profile.goals ? `Goals: ${profile.goals}` : ""}
 ${profile.condition && profile.condition !== "none" ? `Condition: ${profile.condition}` : ""}
-${profile.hardDay ? `Hard day looks like: ${profile.hardDay}` : ""}`;
+${profile.hardDay ? `Hard day looks like: ${profile.hardDay}` : ""}
+
+${memoryContext ? `MEMORY FROM PAST CONVERSATIONS:
+${memoryContext}
+
+Use this memory to make the conversation feel continuous and personal. Reference it naturally when relevant.` : ""}`;
 };
 
 const GREETING = () => {
@@ -70,6 +86,55 @@ const ONBOARDING_STEPS = [
 const conditionColors = { adhd:"#0ea5e9", anxiety:"#8b5cf6", depression:"#00c896", autism:"#ec4899", executive_dysfunction:"#f59e0b", ptsd:"#f97316", general:"rgba(26,26,26,0.3)" };
 const conditionLabels = { adhd:"ADHD", anxiety:"Anxiety", depression:"Depression", autism:"Autism", executive_dysfunction:"Executive Dysfunction", ptsd:"PTSD", general:"Other", none:"" };
 
+// ── Memory utilities ────────────────────────────────────────────────────────
+
+function saveConversation(messages, profile) {
+  if (!messages.length) return;
+  try {
+    const existing = JSON.parse(localStorage.getItem("luma_conversations") || "[]");
+    const session = {
+      id: Date.now(),
+      date: new Date().toISOString(),
+      dateLabel: new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", hour:"numeric", minute:"2-digit" }),
+      messages: messages.slice(-MAX_SUMMARY_MESSAGES),
+      messageCount: messages.length,
+      profile: { name: profile.name, condition: profile.condition }
+    };
+    const updated = [session, ...existing].slice(0, 30);
+    localStorage.setItem("luma_conversations", JSON.stringify(updated));
+  } catch (e) { console.error("Memory save error:", e); }
+}
+
+function buildMemoryContext(conversations) {
+  if (!conversations.length) return "";
+  const recent = conversations.slice(0, 8);
+  return recent.map(conv => {
+    const msgs = conv.messages
+      .filter(m => m.role !== "system")
+      .map(m => `${m.role === "user" ? "User" : "Luma"}: ${m.content.slice(0, 200)}`)
+      .join("\n");
+    return `[${conv.dateLabel}]\n${msgs}`;
+  }).join("\n\n---\n\n");
+}
+
+function extractMemoryHighlights(conversations) {
+  if (!conversations.length) return [];
+  const highlights = [];
+  conversations.slice(0, 5).forEach(conv => {
+    const lastUser = conv.messages.filter(m => m.role === "user").slice(-1)[0];
+    const lastLuma = conv.messages.filter(m => m.role === "assistant").slice(-1)[0];
+    if (lastUser && lastLuma) {
+      highlights.push({
+        date: conv.dateLabel,
+        topic: lastUser.content.slice(0, 80),
+        response: lastLuma.content.slice(0, 120),
+        id: conv.id
+      });
+    }
+  });
+  return highlights;
+}
+
 export default function App() {
   const [screen, setScreen] = useState("home");
   const [messages, setMessages] = useState([]);
@@ -77,6 +142,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_profile")||"{}"); } catch { return {}; } });
   const [tasks, setTasks] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_tasks")||"[]"); } catch { return []; } });
+  const [conversations, setConversations] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_conversations")||"[]"); } catch { return []; } });
   const [newTask, setNewTask] = useState("");
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileDraft, setProfileDraft] = useState(profile);
@@ -87,6 +153,8 @@ export default function App() {
   const [onboardingInput, setOnboardingInput] = useState("");
   const [onboardingSelect, setOnboardingSelect] = useState("none");
   const [isListening, setIsListening] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
+  const [sessionSaved, setSessionSaved] = useState(false);
   const bottomRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -94,6 +162,13 @@ export default function App() {
   useEffect(() => { localStorage.setItem("luma_profile", JSON.stringify(profile)); }, [profile]);
   useEffect(() => { localStorage.setItem("luma_tasks", JSON.stringify(tasks)); }, [tasks]);
   useEffect(() => { fetch("http://localhost:11434/api/tags").then(() => setOllamaStatus("online")).catch(() => setOllamaStatus("offline")); }, []);
+
+  // Auto-save conversation when user navigates away or closes
+  useEffect(() => {
+    const handleUnload = () => { if (messages.length > 0) saveConversation(messages, profile); };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, [messages, profile]);
 
   const startListening = () => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) { alert("Voice requires Chrome."); return; }
@@ -120,12 +195,57 @@ export default function App() {
     setMessages(updated);
     setLoading(true);
     setScreen("chat");
+
+    const memoryContext = buildMemoryContext(conversations);
+
     try {
-      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"system", content:LUMA_SYSTEM(profile) }, ...updated], stream:false }) });
+      const res = await fetch(OLLAMA_URL, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"mistral-nemo:latest",
+          messages:[
+            { role:"system", content:LUMA_SYSTEM(profile, memoryContext) },
+            ...updated.slice(-MAX_MEMORY_MESSAGES)
+          ],
+          stream:false
+        })
+      });
       const data = await res.json();
-      setMessages(prev => [...prev, { role:"assistant", content:data.message?.content || "Connection error." }]);
-    } catch { setMessages(prev => [...prev, { role:"assistant", content:"Couldn't connect to Ollama. Make sure it's running on your Mac." }]); }
+      const reply = data.message?.content || "Connection error.";
+      setMessages(prev => [...prev, { role:"assistant", content:reply }]);
+    } catch {
+      setMessages(prev => [...prev, { role:"assistant", content:"Couldn't connect to Ollama. Make sure it's running on your Mac." }]);
+    }
     setLoading(false);
+  };
+
+  const saveCurrentSession = () => {
+    if (messages.length === 0) return;
+    saveConversation(messages, profile);
+    const updated = JSON.parse(localStorage.getItem("luma_conversations") || "[]");
+    setConversations(updated);
+    setSessionSaved(true);
+    setTimeout(() => setSessionSaved(false), 2000);
+  };
+
+  const clearCurrentChat = () => {
+    if (messages.length > 0) saveConversation(messages, profile);
+    const updated = JSON.parse(localStorage.getItem("luma_conversations") || "[]");
+    setConversations(updated);
+    setMessages([]);
+  };
+
+  const deleteConversation = (id) => {
+    const updated = conversations.filter(c => c.id !== id);
+    setConversations(updated);
+    localStorage.setItem("luma_conversations", JSON.stringify(updated));
+  };
+
+  const loadConversation = (conv) => {
+    setMessages(conv.messages);
+    setScreen("chat");
+    setShowMemory(false);
   };
 
   const nextOnboardingStep = () => {
@@ -146,6 +266,8 @@ export default function App() {
   const saveProfile = () => { setProfile(profileDraft); setEditingProfile(false); };
 
   const currentStep = ONBOARDING_STEPS[onboardingStep];
+  const memoryHighlights = extractMemoryHighlights(conversations);
+  const lastSession = conversations[0];
 
   return (
     <div style={{ minHeight:"100vh", background:"#f5f2ee", fontFamily:"'Nunito',-apple-system,sans-serif", color:"#1a1a1a", position:"relative", overflow:"hidden" }}>
@@ -161,6 +283,7 @@ export default function App() {
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         @keyframes slideUp{from{opacity:0;transform:translateY(48px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,69,58,0.4)}50%{box-shadow:0 0 0 10px rgba(255,69,58,0)}}
+        @keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:0;}
         ::placeholder{color:rgba(26,26,26,0.25);font-family:'Nunito',sans-serif;}
@@ -183,6 +306,7 @@ export default function App() {
         .mic-btn:hover{transform:scale(1.05);}
         .mic-btn.listening{animation:micPulse 1.5s ease-in-out infinite;}
         .task-row:hover .del-btn{opacity:1!important;}
+        .mem-card:hover .mem-del{opacity:1!important;}
         .pill-label{font-size:11px;font-weight:800;color:rgba(26,26,26,0.3);letter-spacing:0.1em;text-transform:uppercase;}
         .pill{display:inline-flex;align-items:center;gap:7px;padding:5px 14px;background:rgba(255,255,255,0.7);border:0.5px solid rgba(26,26,26,0.07);border-radius:100px;font-size:12px;font-weight:800;color:rgba(26,26,26,0.45);letter-spacing:0.06em;text-transform:uppercase;backdrop-filter:blur(10px);}
         .pill-dot{width:6px;height:6px;border-radius:50%;background:linear-gradient(135deg,#00c896,#0ea5e9);animation:pulse 2s infinite;}
@@ -194,9 +318,12 @@ export default function App() {
         .ob-btn:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 8px 32px rgba(14,165,233,0.25);}
         .section-scroll{flex:1;overflow-y:auto;padding:28px 24px;}
         .luma-logo{font-size:22px;font-weight:900;letter-spacing:-0.02em;cursor:pointer;font-family:'Nunito',sans-serif;}
+        .memory-panel{position:fixed;top:64px;right:0;bottom:0;width:320px;background:rgba(245,242,238,0.96);backdrop-filter:blur(40px);border-left:0.5px solid rgba(26,26,26,0.07);z-index:90;overflow-y:auto;padding:24px;animation:slideRight 0.3s ease;}
+        .mem-card{background:rgba(255,255,255,0.75);border:0.5px solid rgba(26,26,26,0.07);border-radius:16px;padding:16px;margin-bottom:10px;cursor:pointer;transition:all 0.2s;}
+        .mem-card:hover{background:rgba(255,255,255,0.95);transform:translateY(-1px);box-shadow:0 4px 20px rgba(0,0,0,0.06);}
       `}</style>
 
-      {/* Aurora orbs — same as landing */}
+      {/* Aurora orbs */}
       <div style={{ position:"fixed", inset:0, pointerEvents:"none", zIndex:0, overflow:"hidden" }}>
         <div style={{ position:"absolute", top:"-10%", left:"-5%", width:"700px", height:"500px", borderRadius:"50%", background:"radial-gradient(ellipse, rgba(0,200,150,0.18) 0%, transparent 70%)", filter:"blur(60px)", animation:"aurora1 18s ease-in-out infinite" }} />
         <div style={{ position:"absolute", top:"20%", right:"-10%", width:"600px", height:"600px", borderRadius:"50%", background:"radial-gradient(ellipse, rgba(14,165,233,0.15) 0%, transparent 70%)", filter:"blur(60px)", animation:"aurora2 22s ease-in-out infinite" }} />
@@ -241,10 +368,45 @@ export default function App() {
         </div>
       )}
 
-      {/* Nav — same as landing */}
+      {/* Memory Panel */}
+      {showMemory && (
+        <div className="memory-panel">
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"20px" }}>
+            <div style={{ fontSize:"17px", fontWeight:800 }}>Memory</div>
+            <button onClick={() => setShowMemory(false)} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer", lineHeight:1 }}>×</button>
+          </div>
+          <p style={{ fontSize:"13px", color:"rgba(26,26,26,0.4)", fontWeight:500, lineHeight:1.6, marginBottom:"20px" }}>
+            Luma remembers your past conversations and uses them to give you more personalized support.
+          </p>
+          {conversations.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"40px 0", color:"rgba(26,26,26,0.22)" }}>
+              <div style={{ fontSize:"15px", fontWeight:700, marginBottom:"8px" }}>No memories yet</div>
+              <div style={{ fontSize:"13px", fontWeight:500 }}>Start chatting and Luma will remember your conversations.</div>
+            </div>
+          ) : conversations.map(conv => (
+            <div key={conv.id} className="mem-card" onClick={() => loadConversation(conv)}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"8px" }}>
+                <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.3)", letterSpacing:"0.06em", textTransform:"uppercase" }}>{conv.dateLabel}</div>
+                <button className="mem-del" onClick={e => { e.stopPropagation(); deleteConversation(conv.id); }} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"16px", transition:"opacity 0.2s", lineHeight:1, padding:"0 2px" }}>×</button>
+              </div>
+              <div style={{ fontSize:"14px", fontWeight:600, color:"rgba(26,26,26,0.75)", lineHeight:1.5, marginBottom:"4px" }}>
+                {conv.messages.filter(m=>m.role==="user")[0]?.content.slice(0,80)}…
+              </div>
+              <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.35)" }}>{conv.messageCount} messages</div>
+            </div>
+          ))}
+          {conversations.length > 0 && (
+            <button onClick={() => { setConversations([]); localStorage.removeItem("luma_conversations"); }} style={{ width:"100%", padding:"12px", background:"rgba(255,69,58,0.06)", border:"0.5px solid rgba(255,69,58,0.15)", borderRadius:"12px", color:"#ff453a", fontSize:"13px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", marginTop:"12px" }}>
+              Clear all memories
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Nav */}
       <nav className="nav-glass" style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, height:"64px", display:"flex", alignItems:"center", padding:"0 40px", justifyContent:"space-between" }}>
         <div className="luma-logo aurora-text" onClick={() => setScreen("home")}>Luma</div>
-        <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
           {profile.condition && profile.condition !== "none" && (
             <span style={{ fontSize:"11px", fontWeight:800, color:conditionColors[profile.condition], background:`${conditionColors[profile.condition]}15`, padding:"4px 10px", borderRadius:"100px", marginRight:"4px" }}>
               {conditionLabels[profile.condition]}
@@ -257,6 +419,10 @@ export default function App() {
           {[["home","Home"],["chat","Chat"],["tasks","Tasks"],["profile","Profile"]].map(([s,l]) => (
             <button key={s} className={`nav-btn ${screen===s?"active":""}`} onClick={() => setScreen(s)}>{l}</button>
           ))}
+          <button className={`nav-btn ${showMemory?"active":""}`} onClick={() => setShowMemory(m=>!m)} style={{ position:"relative" }}>
+            Memory
+            {conversations.length > 0 && <span style={{ position:"absolute", top:"4px", right:"8px", width:"6px", height:"6px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)" }} />}
+          </button>
         </div>
       </nav>
 
@@ -264,6 +430,17 @@ export default function App() {
       {screen === "home" && (
         <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
           <div style={{ maxWidth:"720px", margin:"0 auto" }}>
+
+            {/* Last session recall */}
+            {lastSession && (
+              <div style={{ background:"rgba(255,255,255,0.65)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"20px", padding:"16px 20px", marginBottom:"28px", backdropFilter:"blur(20px)", animation:"fadeUp 0.5s ease", cursor:"pointer" }} onClick={() => loadConversation(lastSession)}>
+                <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.3)", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:"6px" }}>Continue from last time · {lastSession.dateLabel}</div>
+                <div style={{ fontSize:"15px", fontWeight:600, color:"rgba(26,26,26,0.65)", lineHeight:1.5 }}>
+                  "{lastSession.messages.filter(m=>m.role==="user")[0]?.content.slice(0,100)}…"
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom:"20px", animation:"fadeUp 0.6s ease" }}>
               <div className="pill" style={{ marginBottom:"20px" }}>
                 <div className="pill-dot" />
@@ -273,11 +450,10 @@ export default function App() {
                 Your life.<br /><span className="aurora-text">Illuminated.</span>
               </h1>
               <p style={{ fontSize:"clamp(17px,2vw,20px)", color:"rgba(26,26,26,0.45)", lineHeight:1.65, fontWeight:500, maxWidth:"520px" }}>
-                I'm here for you — your career, your goals, your hard days, and everything in between. Just talk to me.
+                I'm here for you — your career, your goals, your hard days, and everything in between.
               </p>
             </div>
 
-            {/* Input — styled like landing's waitlist input */}
             <div style={{ animation:"fadeUp 0.6s ease 0.1s both", marginBottom:"36px" }}>
               <div className="input-wrap" style={{ padding:"18px 20px", display:"flex", alignItems:"flex-end", gap:"12px" }}>
                 <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();} }} placeholder={`What can I help you with${profile.name?`, ${profile.name}`:""}?`} rows={1} style={{ flex:1, background:"transparent", border:"none", color:"#1a1a1a", fontSize:"17px", resize:"none", fontFamily:"'Nunito',sans-serif", fontWeight:600, lineHeight:1.6, maxHeight:"160px", overflowY:"auto" }} onInput={e => { e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,160)+"px"; }} />
@@ -285,15 +461,14 @@ export default function App() {
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={isListening?"#fff":"rgba(26,26,26,0.45)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
                 </button>
                 <button className="send-btn" onClick={() => sendMessage()} disabled={!input.trim()||loading} style={{ width:"44px", height:"44px", borderRadius:"14px", background:input.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", cursor:input.trim()?"pointer":"default", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                  {loading ? <div style={{ width:"16px", height:"16px", border:"2.5px solid rgba(255,255,255,0.3)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} /> : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={input.trim()?"#fff":"rgba(26,26,26,0.3)"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>}
+                  {loading?<div style={{ width:"16px", height:"16px", border:"2.5px solid rgba(255,255,255,0.3)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={input.trim()?"#fff":"rgba(26,26,26,0.3)"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>}
                 </button>
               </div>
               <div style={{ fontSize:"12px", fontWeight:600, color:"rgba(26,26,26,0.18)", marginTop:"10px", paddingLeft:"4px" }}>
-                {isListening ? "Listening… tap mic to stop" : "Tap mic to speak · Enter to send"}
+                {isListening?"Listening… tap mic to stop":"Tap mic to speak · Enter to send"}
               </div>
             </div>
 
-            {/* Suggested — styled like landing's feature cards */}
             <div style={{ animation:"fadeUp 0.6s ease 0.2s both" }}>
               <div className="pill-label" style={{ marginBottom:"14px" }}>Suggested</div>
               <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
@@ -310,7 +485,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Tasks preview */}
             {tasks.filter(t=>!t.done).length > 0 && (
               <div style={{ marginTop:"40px", animation:"fadeUp 0.6s ease 0.3s both" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
@@ -338,6 +512,11 @@ export default function App() {
                 <div style={{ textAlign:"center", padding:"100px 0" }}>
                   <div style={{ fontSize:"48px", fontWeight:900, marginBottom:"16px" }}><span className="aurora-text">Luma</span></div>
                   <div style={{ fontSize:"18px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>I'm here. What's on your mind?</div>
+                  {conversations.length > 0 && (
+                    <div style={{ marginTop:"24px", fontSize:"14px", fontWeight:600, color:"rgba(26,26,26,0.3)" }}>
+                      I remember our past {conversations.length} conversation{conversations.length!==1?"s":""} — I'll use them to give you more personalized support.
+                    </div>
+                  )}
                 </div>
               )}
               {messages.map((m,i) => (
@@ -374,7 +553,12 @@ export default function App() {
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:"10px" }}>
                 <div style={{ fontSize:"12px", fontWeight:600, color:"rgba(26,26,26,0.18)" }}>{isListening?"Listening… tap mic to stop":"Enter to send · Shift+Enter for new line"}</div>
-                <button onClick={() => setMessages([])} style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.2)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Clear</button>
+                <div style={{ display:"flex", gap:"12px" }}>
+                  <button onClick={saveCurrentSession} style={{ fontSize:"12px", fontWeight:700, color:sessionSaved?"#00c896":"rgba(26,26,26,0.2)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif", transition:"color 0.2s" }}>
+                    {sessionSaved?"✓ Saved":"Save"}
+                  </button>
+                  <button onClick={clearCurrentChat} style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.2)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>New chat</button>
+                </div>
               </div>
             </div>
           </div>
@@ -444,10 +628,22 @@ export default function App() {
                 <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"8px" }}>Profile</h2>
                 <p style={{ fontSize:"17px", color:"rgba(26,26,26,0.36)", fontWeight:500 }}>Help Luma know you better.</p>
               </div>
-              <button onClick={() => editingProfile ? saveProfile() : setEditingProfile(true)} style={{ padding:"12px 24px", background:editingProfile?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(255,255,255,0.75)", border:`0.5px solid ${editingProfile?"transparent":"rgba(26,26,26,0.1)"}`, borderRadius:"18px", color:editingProfile?"#fff":"#1a1a1a", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif", transition:"all 0.22s" }}>
+              <button onClick={() => editingProfile ? saveProfile() : setEditingProfile(true)} style={{ padding:"12px 24px", background:editingProfile?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(255,255,255,0.75)", border:`0.5px solid ${editingProfile?"transparent":"rgba(26,26,26,0.1)"}`, borderRadius:"18px", color:editingProfile?"#fff":"#1a1a1a", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
                 {editingProfile?"Save":"Edit"}
               </button>
             </div>
+
+            {/* Memory stats */}
+            {conversations.length > 0 && (
+              <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"20px", padding:"18px 22px", marginBottom:"16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div>
+                  <div style={{ fontSize:"13px", fontWeight:800, color:"#00a87c", marginBottom:"4px" }}>Luma remembers you</div>
+                  <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.5)" }}>{conversations.length} past conversation{conversations.length!==1?"s":""} saved locally</div>
+                </div>
+                <button onClick={() => setShowMemory(true)} style={{ padding:"8px 16px", background:"rgba(0,200,150,0.12)", border:"0.5px solid rgba(0,200,150,0.2)", borderRadius:"12px", color:"#00a87c", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>View</button>
+              </div>
+            )}
+
             {[
               { key:"name", label:"Your Name", placeholder:"e.g. Deandre" },
               { key:"career", label:"Career and Role", placeholder:"e.g. QA Engineer, bioengineering background" },
@@ -467,6 +663,7 @@ export default function App() {
                 )}
               </div>
             ))}
+
             <div className="card" style={{ borderRadius:"22px", padding:"22px 24px", marginBottom:"10px" }}>
               <div className="pill-label" style={{ marginBottom:"12px" }}>Condition or Challenge</div>
               {editingProfile ? (
@@ -489,13 +686,15 @@ export default function App() {
                 Helps Luma adapt its communication style to how your brain works. 100% private — never leaves your device.
               </div>
             </div>
+
             <div className="card" style={{ borderRadius:"22px", padding:"24px", marginTop:"8px" }}>
               <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)", marginBottom:"10px" }}>Luma knows you</div>
               <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.65, marginBottom:"20px" }}>The more you share, the more Luma adapts to your pace, your style, and exactly what you need.</div>
-              <button onClick={() => sendMessage("Based on my profile and how my brain works, what are the most helpful things you can do for me? Be specific and gentle.")} style={{ padding:"13px 22px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
+              <button onClick={() => sendMessage("Based on my profile and our past conversations, what are the most helpful things you can do for me right now? Be specific and gentle.")} style={{ padding:"13px 22px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
                 Ask Luma for personalized advice
               </button>
             </div>
+
             <div style={{ textAlign:"center", marginTop:"24px", paddingBottom:"8px" }}>
               <button onClick={() => { setShowOnboarding(true); setOnboardingStep(0); setOnboardingInput(""); setOnboardingData({}); }} style={{ fontSize:"13px", fontWeight:700, color:"rgba(26,26,26,0.22)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
                 Redo onboarding
