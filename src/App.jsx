@@ -3,72 +3,183 @@ import { useState, useEffect, useRef } from "react";
 const OLLAMA_URL = "http://localhost:11434/api/chat";
 const MAX_MEMORY_MESSAGES = 50;
 
-const LUMA_SYSTEM = (profile, memoryContext) => {
-  const conditionGuidance = {
-    adhd: "The user has ADHD. Use SHORT paragraphs. Be energetic and direct. Break everything into bullet points. Celebrate momentum. Never give long walls of text. End with ONE specific next action.",
-    anxiety: "The user has anxiety. Be calm, structured, and reassuring. Always explain your reasoning. No surprises. Validate feelings first. Provide structured options.",
-    depression: "The user has depression. Be warm, gentle, never overwhelming. Celebrate the tiniest wins. Never push harder than they can handle. One small thing at a time. Lead with compassion.",
-    autism: "The user is autistic. Be literal and precise. Never use idioms, sarcasm, or vague language. Be consistent and structured. Mean exactly what you say.",
-    executive_dysfunction: "The user has executive dysfunction. Break everything into the absolute smallest possible steps. Ask questions rather than waiting. Keep responses digestible.",
-    ptsd: "The user has PTSD. Be gentle. Never use triggering language. Always ask before giving advice. Respect boundaries. Focus on safety and grounding first.",
-    general: ""
-  };
-  const condition = profile.condition || "general";
-  const conditionNote = conditionGuidance[condition] || "";
-  return `You are Luma, a warm, intelligent, deeply personal AI life companion.
+const ALL_CONDITIONS = [
+  // Neurodevelopmental
+  { key:"adhd", label:"ADHD", group:"Neurodevelopmental" },
+  { key:"autism", label:"Autism / ASD", group:"Neurodevelopmental" },
+  { key:"dyslexia", label:"Dyslexia", group:"Neurodevelopmental" },
+  { key:"dyspraxia", label:"Dyspraxia / DCD", group:"Neurodevelopmental" },
+  { key:"dyscalculia", label:"Dyscalculia", group:"Neurodevelopmental" },
+  { key:"tourette", label:"Tourette Syndrome", group:"Neurodevelopmental" },
+  // Mood
+  { key:"depression", label:"Depression", group:"Mood" },
+  { key:"bipolar", label:"Bipolar Disorder", group:"Mood" },
+  { key:"cyclothymia", label:"Cyclothymia", group:"Mood" },
+  { key:"pmdd", label:"PMDD", group:"Mood" },
+  // Anxiety
+  { key:"anxiety", label:"Generalized Anxiety", group:"Anxiety" },
+  { key:"social_anxiety", label:"Social Anxiety", group:"Anxiety" },
+  { key:"panic", label:"Panic Disorder", group:"Anxiety" },
+  { key:"agoraphobia", label:"Agoraphobia", group:"Anxiety" },
+  { key:"ocd", label:"OCD", group:"Anxiety" },
+  { key:"phobias", label:"Specific Phobias", group:"Anxiety" },
+  // Trauma
+  { key:"ptsd", label:"PTSD", group:"Trauma" },
+  { key:"cptsd", label:"C-PTSD", group:"Trauma" },
+  { key:"acute_stress", label:"Acute Stress Disorder", group:"Trauma" },
+  // Executive Function
+  { key:"executive_dysfunction", label:"Executive Dysfunction", group:"Executive Function" },
+  { key:"working_memory", label:"Working Memory Difficulties", group:"Executive Function" },
+  { key:"time_blindness", label:"Time Blindness", group:"Executive Function" },
+  { key:"task_initiation", label:"Task Initiation Difficulties", group:"Executive Function" },
+  // Eating & Body
+  { key:"anorexia", label:"Anorexia", group:"Eating & Body" },
+  { key:"bulimia", label:"Bulimia", group:"Eating & Body" },
+  { key:"binge_eating", label:"Binge Eating Disorder", group:"Eating & Body" },
+  { key:"arfid", label:"ARFID", group:"Eating & Body" },
+  { key:"body_dysmorphia", label:"Body Dysmorphia", group:"Eating & Body" },
+  // Personality
+  { key:"bpd", label:"Borderline Personality (BPD)", group:"Personality" },
+  { key:"npd", label:"Narcissistic Personality (NPD)", group:"Personality" },
+  { key:"avpd", label:"Avoidant Personality (AvPD)", group:"Personality" },
+  { key:"dependent_pd", label:"Dependent Personality", group:"Personality" },
+  // Psychotic
+  { key:"schizophrenia", label:"Schizophrenia", group:"Psychotic" },
+  { key:"schizoaffective", label:"Schizoaffective Disorder", group:"Psychotic" },
+  // Dissociative
+  { key:"did", label:"Dissociative Identity (DID)", group:"Dissociative" },
+  { key:"depersonalization", label:"Depersonalization / Derealization", group:"Dissociative" },
+  { key:"dissociative_amnesia", label:"Dissociative Amnesia", group:"Dissociative" },
+  // Somatic & Pain
+  { key:"chronic_pain", label:"Chronic Pain", group:"Somatic & Pain" },
+  { key:"fibromyalgia", label:"Fibromyalgia", group:"Somatic & Pain" },
+  { key:"chronic_fatigue", label:"Chronic Fatigue Syndrome", group:"Somatic & Pain" },
+  { key:"somatic_symptom", label:"Somatic Symptom Disorder", group:"Somatic & Pain" },
+  // Sleep
+  { key:"insomnia", label:"Insomnia", group:"Sleep" },
+  { key:"hypersomnia", label:"Hypersomnia", group:"Sleep" },
+  { key:"narcolepsy", label:"Narcolepsy", group:"Sleep" },
+  { key:"sleep_apnea", label:"Sleep Apnea", group:"Sleep" },
+  // Substance & Behavioral
+  { key:"addiction", label:"Addiction / Substance Use", group:"Behavioral" },
+  { key:"gambling", label:"Gambling Disorder", group:"Behavioral" },
+  // Other
+  { key:"selective_mutism", label:"Selective Mutism", group:"Other" },
+  { key:"sensory_processing", label:"Sensory Processing Disorder", group:"Other" },
+  { key:"rejection_sensitivity", label:"Rejection Sensitive Dysphoria", group:"Other" },
+];
 
-${conditionNote}
+const buildConditionGuidance = (conditions = [], customConditions = "") => {
+  const guidance = [];
+  const c = Array.isArray(conditions) ? conditions : [];
+
+  if (c.includes("adhd") || c.includes("time_blindness") || c.includes("task_initiation")) guidance.push("ADHD/Executive: Use SHORT paragraphs. Break everything into bullet points. Celebrate momentum. End with ONE specific next action. Never give walls of text.");
+  if (c.includes("anxiety") || c.includes("social_anxiety") || c.includes("panic") || c.includes("ocd")) guidance.push("Anxiety: Be calm and structured. Always explain your reasoning. No surprises. Validate feelings first. Provide clear options.");
+  if (c.includes("depression") || c.includes("bipolar") || c.includes("cyclothymia")) guidance.push("Mood: Be warm and gentle. Celebrate the tiniest wins. Never overwhelm. One small thing at a time. Lead with compassion always.");
+  if (c.includes("autism") || c.includes("sensory_processing")) guidance.push("Autism/Sensory: Be literal and precise. No idioms, sarcasm, or vague language. Be consistent and structured. Mean exactly what you say.");
+  if (c.includes("executive_dysfunction") || c.includes("working_memory")) guidance.push("Executive Dysfunction: Break everything into the absolute smallest steps. Ask questions rather than waiting. Keep responses short and digestible.");
+  if (c.includes("ptsd") || c.includes("cptsd") || c.includes("acute_stress") || c.includes("did") || c.includes("depersonalization")) guidance.push("Trauma/Dissociation: Be gentle and grounding. Never use triggering language. Always ask before giving advice. Focus on safety first. Go slowly.");
+  if (c.includes("bpd")) guidance.push("BPD: Be consistent and predictable. Validate emotions explicitly. Never dismiss feelings. Be warm but maintain clear boundaries. Avoid anything that could feel like rejection.");
+  if (c.includes("chronic_pain") || c.includes("fibromyalgia") || c.includes("chronic_fatigue")) guidance.push("Chronic Pain/Fatigue: Always acknowledge physical limitations. Never push harder than they say they can. Adapt all suggestions to their energy level today.");
+  if (c.includes("rejection_sensitivity")) guidance.push("RSD: Be especially affirming. Frame everything positively. Never use language that could feel critical. Celebrate effort not just outcomes.");
+  if (c.includes("insomnia") || c.includes("hypersomnia") || c.includes("narcolepsy")) guidance.push("Sleep Disorders: Be aware their energy and cognition fluctuate with sleep. Never judge low-energy days. Adjust expectations accordingly.");
+  if (c.includes("schizophrenia") || c.includes("schizoaffective")) guidance.push("Psychotic Disorders: Stay grounded in reality. Be clear, calm, and structured. Never play along with delusions. Focus on practical day-to-day support.");
+  if (customConditions) guidance.push(`Custom conditions noted: ${customConditions}. Adapt your communication with extra care and ask the user what kind of support works best for them.`);
+
+  return guidance.length > 0 ? guidance.join("\n") : "";
+};
+
+const LUMA_SYSTEM = (profile, memoryContext) => {
+  const conditions = Array.isArray(profile.conditions) ? profile.conditions : [];
+  const conditionNote = buildConditionGuidance(conditions, profile.customConditions);
+  const conditionLabelsStr = conditions.map(c => ALL_CONDITIONS.find(ac => ac.key === c)?.label || c).join(", ");
+
+  return `You are Luma, a warm, intelligent, deeply personal AI life companion and the most caring support system anyone has ever had.
+
+${conditionNote ? `CONDITION-SPECIFIC GUIDANCE (apply all that apply):\n${conditionNote}\n` : ""}
 
 Your core personality:
 - Genuinely warm and caring — like a best friend who happens to be very wise
-- Adaptive — you change your communication style completely based on the user's needs
+- Adaptive — you change your communication style based on ALL of the user's conditions simultaneously
 - Honest but kind — you give real help, not just validation
 - Proactive — you notice patterns across conversations and bring them up naturally
-- Comfort and success are your only goals
+- Comfort and success are your only goals — never productivity for its own sake
 
 MEMORY RULES:
 - Reference past conversations naturally — like a friend who remembers
 - If you notice patterns mention them gently
-- Never make the user feel surveilled — use memory warmly
+- Never make the user feel surveilled — use memory warmly and humanly
 
 IMPORTANT RULES:
 - Always ask one gentle question first to understand how the person is doing TODAY
-- Celebrate every win no matter how small
+- Celebrate every win no matter how small — getting out of bed counts
 - Never shame, never pressure, never overwhelm
-- If someone seems to be struggling emotionally, address that FIRST
+- If someone seems to be struggling emotionally, address that FIRST before anything practical
 - Break every task into the smallest possible step
-- End every response with ONE clear, gentle next step
+- End every response with ONE clear, gentle next step — never a list of things to do
 - If someone says they're having a hard day, switch to comfort mode immediately
+- Never suggest anything that conflicts with their physical or mental limitations
 
 User Profile:
 ${profile.name ? `Name: ${profile.name}` : ""}
 ${profile.career ? `Career: ${profile.career}` : ""}
 ${profile.interests ? `Interests: ${profile.interests}` : ""}
 ${profile.goals ? `Goals: ${profile.goals}` : ""}
-${profile.condition && profile.condition !== "none" ? `Condition: ${profile.condition}` : ""}
+${conditionLabelsStr ? `Conditions: ${conditionLabelsStr}` : ""}
+${profile.customConditions ? `Additional conditions: ${profile.customConditions}` : ""}
 ${profile.hardDay ? `Hard day looks like: ${profile.hardDay}` : ""}
+${profile.communicationStyle ? `Preferred communication style: ${profile.communicationStyle}` : ""}
 
 ${memoryContext ? `MEMORY FROM PAST CONVERSATIONS:\n${memoryContext}` : ""}`;
 };
 
 const MORNING_BRIEFING_SYSTEM = (profile, tasks, memoryContext, dayInfo) => {
-  const conditionStyle = {
-    adhd: "Keep it SHORT and punchy. Use bullet points. Max 3 focus items. High energy. End with ONE tiny action.",
-    anxiety: "Be calm and reassuring. Structure everything clearly. No surprises. Validate that today is manageable.",
-    depression: "Be warm and gentle. Keep expectations low and achievable. Celebrate that they showed up today.",
-    autism: "Be literal and structured. Use clear headers. No ambiguity. Predictable format.",
-    executive_dysfunction: "Ultra simple. One thing at a time. Make starting feel easy. Short sentences.",
-    ptsd: "Gentle and grounding. Focus on safety and small wins. No pressure.",
-    general: "Warm and encouraging."
-  };
-  const style = conditionStyle[profile.condition || "general"] || conditionStyle.general;
+  const conditions = Array.isArray(profile.conditions) ? profile.conditions : [];
+  const hasAdhd = conditions.some(c => ["adhd","executive_dysfunction","time_blindness","task_initiation"].includes(c));
+  const hasAnxiety = conditions.some(c => ["anxiety","social_anxiety","panic","ocd"].includes(c));
+  const hasDepression = conditions.some(c => ["depression","bipolar","cyclothymia"].includes(c));
+  const hasAutism = conditions.some(c => ["autism","sensory_processing"].includes(c));
+  const hasExecDys = conditions.some(c => ["executive_dysfunction","working_memory"].includes(c));
+  const hasTrauma = conditions.some(c => ["ptsd","cptsd","did","depersonalization"].includes(c));
+
+  let style = "Warm and encouraging.";
+  if (hasAdhd) style = "SHORT and punchy. Bullet points. Max 3 focus items. One tiny action.";
+  if (hasAnxiety) style = "Calm and reassuring. Structured. No surprises. Validate that today is manageable.";
+  if (hasDepression) style = "Warm and gentle. Low expectations. Celebrate showing up. One tiny thing is enough.";
+  if (hasAutism) style = "Literal and structured. Clear headers. No ambiguity. Predictable format.";
+  if (hasExecDys) style = "Ultra simple. One thing at a time. Make starting feel easy.";
+  if (hasTrauma) style = "Gentle and grounding. Focus on safety and small wins. No pressure at all.";
+
   const pendingTasks = tasks.filter(t => !t.done).slice(0, 5).map(t => `- ${t.text}${t.dueDate ? ` (due ${t.dueDate})` : ""}${t.priority === "urgent" ? " [URGENT]" : ""}`).join("\n");
+
   return `You are Luma generating a personalized morning briefing. Style: ${style}
-User: ${profile.name || "friend"} | Day: ${dayInfo.dayName}, ${dayInfo.date} | Goals: ${profile.goals || "not set"} | Condition: ${profile.condition || "none"}
+User: ${profile.name || "friend"} | Day: ${dayInfo.dayName}, ${dayInfo.date} | Goals: ${profile.goals || "not set"} | Conditions: ${conditions.join(", ") || "none"}
 Pending tasks:\n${pendingTasks || "None"}
 ${memoryContext ? `Recent context:\n${memoryContext}` : ""}
-Generate a warm personal morning briefing under 200 words. Feel like a text from a caring friend. Include: greeting, one check-in question, 1-2 focus areas, acknowledge tasks gently, one encouragement.`;
+Generate a warm personal morning briefing under 200 words. Feel like a text from a caring friend who truly understands this person's brain and body. Include: greeting, one gentle check-in question, 1-2 focus areas adapted to their conditions, acknowledge tasks gently, one genuine encouragement.`;
 };
+
+const EMAIL_DRAFT_SYSTEM = (profile, context) => `You are Luma helping ${profile.name || "the user"} draft a professional, clear, and authentic email or message.
+
+Tone guidance: Warm but professional. Sound like a real human, not a corporate bot.
+${Array.isArray(profile.conditions) && profile.conditions.length > 0 ? `Note: This user has ${profile.conditions.join(", ")}. Keep instructions clear and simple.` : ""}
+
+Context provided: ${context}
+
+Generate 2 versions:
+1. CONCISE VERSION — short, direct, gets to the point fast
+2. DETAILED VERSION — more context, warmer tone, more explanation
+
+Format exactly like this:
+---CONCISE---
+Subject: [subject line]
+[email body]
+
+---DETAILED---
+Subject: [subject line]
+[email body]
+
+Make both sound natural and human. No corporate jargon.`;
 
 const GREETING = () => {
   const h = new Date().getHours();
@@ -81,33 +192,16 @@ const getDayInfo = () => {
   const now = new Date();
   const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const h = now.getHours();
-  return {
-    dayName: days[now.getDay()],
-    date: now.toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" }),
-    timeOfDay: h < 12 ? "morning" : h < 17 ? "afternoon" : "evening",
-    hour: h
-  };
+  return { dayName: days[now.getDay()], date: now.toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" }), timeOfDay: h < 12 ? "morning" : h < 17 ? "afternoon" : "evening", hour: h };
 };
 
 const ONBOARDING_STEPS = [
   { key:"name", question:"Hey. What should I call you?", placeholder:"Your name…", hint:"This helps every conversation feel personal.", type:"text" },
   { key:"feeling", question:"How are you feeling today — honestly?", placeholder:"e.g. Pretty good, exhausted, anxious…", hint:"No right answer. Luma meets you where you are.", type:"text" },
-  { key:"condition", question:"Do you have any conditions that affect your daily life?", placeholder:"", hint:"Completely optional and 100% private.", type:"select", options:[
-    { value:"none", label:"None or prefer not to say" },
-    { value:"adhd", label:"ADHD" },
-    { value:"anxiety", label:"Anxiety" },
-    { value:"depression", label:"Depression" },
-    { value:"autism", label:"Autism / Asperger's" },
-    { value:"executive_dysfunction", label:"Executive Dysfunction" },
-    { value:"ptsd", label:"PTSD" },
-    { value:"general", label:"Something else" }
-  ]},
-  { key:"hardDay", question:"What does a really hard day look like for you?", placeholder:"e.g. I can't get out of bed, I feel frozen…", hint:"Luma will recognize these signs and respond with extra care.", type:"text" },
-  { key:"goals", question:"What's the one thing you most want Luma's help with?", placeholder:"e.g. staying organized, managing anxiety…", hint:"This becomes Luma's north star.", type:"text" }
+  { key:"conditions", question:"Do you have any conditions that affect your daily life?", placeholder:"", hint:"Completely optional and 100% private. Select as many as apply — or none. You can always update this later.", type:"conditions" },
+  { key:"hardDay", question:"What does a really hard day look like for you?", placeholder:"e.g. I can't get out of bed, I feel frozen, I forget everything…", hint:"Luma will recognize these signs and respond with extra care.", type:"text" },
+  { key:"goals", question:"What's the one thing you most want Luma's help with?", placeholder:"e.g. staying organized, managing anxiety, growing my career…", hint:"This becomes Luma's north star.", type:"text" }
 ];
-
-const conditionColors = { adhd:"#0ea5e9", anxiety:"#8b5cf6", depression:"#00c896", autism:"#ec4899", executive_dysfunction:"#f59e0b", ptsd:"#f97316", general:"rgba(26,26,26,0.3)" };
-const conditionLabels = { adhd:"ADHD", anxiety:"Anxiety", depression:"Depression", autism:"Autism", executive_dysfunction:"Executive Dysfunction", ptsd:"PTSD", general:"Other", none:"" };
 
 const PRIORITY_CONFIG = {
   urgent: { label:"Urgent", color:"#ff453a", bg:"rgba(255,69,58,0.1)", border:"rgba(255,69,58,0.2)" },
@@ -131,28 +225,31 @@ const GROWTH_CATEGORIES = [
   { key:"health", label:"Health", color:"#ec4899", bg:"rgba(236,72,153,0.08)", icon:"♡" }
 ];
 
+const EMAIL_TYPES = [
+  { key:"professional", label:"Professional Email", icon:"✉" },
+  { key:"follow_up", label:"Follow-up", icon:"→" },
+  { key:"apology", label:"Apology", icon:"♡" },
+  { key:"request", label:"Request / Ask", icon:"◎" },
+  { key:"decline", label:"Declining Something", icon:"×" },
+  { key:"text", label:"Text / iMessage", icon:"◈" },
+  { key:"thank_you", label:"Thank You", icon:"★" },
+  { key:"introduction", label:"Introduction", icon:"→" },
+  { key:"complaint", label:"Complaint / Feedback", icon:"!" },
+  { key:"custom", label:"Something Else", icon:"…" }
+];
+
 function saveConversation(messages, profile) {
   if (!messages.length) return;
   try {
     const existing = JSON.parse(localStorage.getItem("luma_conversations") || "[]");
-    const session = {
-      id: Date.now(),
-      date: new Date().toISOString(),
-      dateLabel: new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", hour:"numeric", minute:"2-digit" }),
-      messages: messages.slice(-10),
-      messageCount: messages.length,
-      profile: { name: profile.name, condition: profile.condition }
-    };
+    const session = { id:Date.now(), date:new Date().toISOString(), dateLabel:new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",hour:"numeric",minute:"2-digit"}), messages:messages.slice(-10), messageCount:messages.length, profile:{name:profile.name,conditions:profile.conditions} };
     localStorage.setItem("luma_conversations", JSON.stringify([session, ...existing].slice(0, 30)));
   } catch(e) { console.error(e); }
 }
 
 function buildMemoryContext(conversations) {
   if (!conversations.length) return "";
-  return conversations.slice(0, 5).map(conv => {
-    const msgs = conv.messages.filter(m => m.role !== "system").map(m => `${m.role==="user"?"User":"Luma"}: ${m.content.slice(0,150)}`).join("\n");
-    return `[${conv.dateLabel}]\n${msgs}`;
-  }).join("\n\n---\n\n");
+  return conversations.slice(0, 5).map(conv => { const msgs = conv.messages.filter(m => m.role !== "system").map(m => `${m.role==="user"?"User":"Luma"}: ${m.content.slice(0,150)}`).join("\n"); return `[${conv.dateLabel}]\n${msgs}`; }).join("\n\n---\n\n");
 }
 
 function shouldShowBriefing() {
@@ -165,12 +262,11 @@ function scheduleReminder(task) {
   if (!task.reminderTime || !("Notification" in window)) return;
   if (Notification.permission !== "granted") { Notification.requestPermission().then(p => { if (p === "granted") scheduleReminder(task); }); return; }
   const [hours, minutes] = task.reminderTime.split(":").map(Number);
-  const now = new Date();
-  const reminderDate = new Date();
+  const now = new Date(); const reminderDate = new Date();
   reminderDate.setHours(hours, minutes, 0, 0);
   if (task.dueDate) { const [year, month, day] = task.dueDate.split("-").map(Number); reminderDate.setFullYear(year, month - 1, day); }
   const delay = reminderDate.getTime() - now.getTime();
-  if (delay > 0) setTimeout(() => new Notification("Luma Reminder", { body: task.text, icon: "/favicon.ico", tag: `luma-task-${task.id}` }), delay);
+  if (delay > 0) setTimeout(() => new Notification("Luma Reminder", { body:task.text, icon:"/favicon.ico", tag:`luma-task-${task.id}` }), delay);
 }
 
 function scheduleDailyBriefingNotif(time, name) {
@@ -179,7 +275,7 @@ function scheduleDailyBriefingNotif(time, name) {
   const now = new Date(); const next = new Date();
   next.setHours(hours, minutes, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
-  setTimeout(() => { new Notification("Good morning from Luma", { body: `Hey${name ? ` ${name}` : ""}! Your morning briefing is ready.`, icon: "/favicon.ico", tag: "luma-morning-briefing" }); scheduleDailyBriefingNotif(time, name); }, next.getTime() - now.getTime());
+  setTimeout(() => { new Notification("Good morning from Luma", { body:`Hey${name?` ${name}`:""}! Your morning briefing is ready.`, icon:"/favicon.ico", tag:"luma-morning-briefing" }); scheduleDailyBriefingNotif(time, name); }, next.getTime() - now.getTime());
 }
 
 function scheduleCheckIn(hour, name) {
@@ -187,12 +283,13 @@ function scheduleCheckIn(hour, name) {
   const now = new Date(); const next = new Date();
   next.setHours(hour, 0, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
-  setTimeout(() => { new Notification("Luma is thinking of you", { body: `Hey${name ? ` ${name}` : ""}. Just checking in — how are you doing today?`, icon: "/favicon.ico", tag: "luma-checkin" }); scheduleCheckIn(hour, name); }, next.getTime() - now.getTime());
+  setTimeout(() => { new Notification("Luma is thinking of you", { body:`Hey${name?` ${name}`:""}. Just checking in — how are you doing today?`, icon:"/favicon.ico", tag:"luma-checkin" }); scheduleCheckIn(hour, name); }, next.getTime() - now.getTime());
 }
 
 export default function App() {
   const [screen, setScreen] = useState("home");
   const [growthTab, setGrowthTab] = useState("career");
+  const [emailTab, setEmailTab] = useState("compose");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -201,6 +298,7 @@ export default function App() {
   const [conversations, setConversations] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_conversations")||"[]"); } catch { return []; } });
   const [growthData, setGrowthData] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_growth")||"{}"); } catch { return {}; } });
   const [wins, setWins] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_wins")||"[]"); } catch { return []; } });
+  const [emailDrafts, setEmailDrafts] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_email_drafts")||"[]"); } catch { return []; } });
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileDraft, setProfileDraft] = useState(profile);
   const [ollamaStatus, setOllamaStatus] = useState("checking");
@@ -208,7 +306,8 @@ export default function App() {
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingData, setOnboardingData] = useState({});
   const [onboardingInput, setOnboardingInput] = useState("");
-  const [onboardingSelect, setOnboardingSelect] = useState("none");
+  const [onboardingConditions, setOnboardingConditions] = useState([]);
+  const [onboardingCustomConditions, setOnboardingCustomConditions] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [sessionSaved, setSessionSaved] = useState(false);
@@ -232,6 +331,14 @@ export default function App() {
   const [growthInsight, setGrowthInsight] = useState("");
   const [growthInsightLoading, setGrowthInsightLoading] = useState(false);
   const [editingGoal, setEditingGoal] = useState(null);
+  const [emailType, setEmailType] = useState("");
+  const [emailContext, setEmailContext] = useState("");
+  const [emailResult, setEmailResult] = useState(null);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [copiedVersion, setCopiedVersion] = useState("");
+  const [savedDraft, setSavedDraft] = useState(false);
+  const [showConditionPicker, setShowConditionPicker] = useState(false);
+  const [conditionSearch, setConditionSearch] = useState("");
   const bottomRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -241,6 +348,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem("luma_notif_settings", JSON.stringify(notifSettings)); }, [notifSettings]);
   useEffect(() => { localStorage.setItem("luma_growth", JSON.stringify(growthData)); }, [growthData]);
   useEffect(() => { localStorage.setItem("luma_wins", JSON.stringify(wins)); }, [wins]);
+  useEffect(() => { localStorage.setItem("luma_email_drafts", JSON.stringify(emailDrafts)); }, [emailDrafts]);
   useEffect(() => { fetch("http://localhost:11434/api/tags").then(() => setOllamaStatus("online")).catch(() => setOllamaStatus("offline")); }, []);
   useEffect(() => { if (!showOnboarding && profile.name && shouldShowBriefing() && ollamaStatus === "online") generateBriefing(); }, [showOnboarding, ollamaStatus]);
   useEffect(() => { const h = () => { if (messages.length > 0) saveConversation(messages, profile); }; window.addEventListener("beforeunload", h); return () => window.removeEventListener("beforeunload", h); }, [messages, profile]);
@@ -254,18 +362,14 @@ export default function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
-      setTasks(prev => prev.map(task => {
-        if (!task.done && task.dueDate && !task.overdue) { const due = new Date(`${task.dueDate}T${task.dueTime || "23:59"}`); if (due < now) return { ...task, overdue:true }; }
-        return task;
-      }));
+      setTasks(prev => prev.map(task => { if (!task.done && task.dueDate && !task.overdue) { const due = new Date(`${task.dueDate}T${task.dueTime || "23:59"}`); if (due < now) return { ...task, overdue:true }; } return task; }));
     }, 60000);
     return () => clearInterval(interval);
   }, []);
 
   const generateBriefing = async () => {
     setBriefingLoading(true); setBriefing(null);
-    const memoryContext = buildMemoryContext(conversations);
-    const dayInfo = getDayInfo();
+    const memoryContext = buildMemoryContext(conversations); const dayInfo = getDayInfo();
     try {
       const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:MORNING_BRIEFING_SYSTEM(profile, tasks, memoryContext, dayInfo) }], stream:false }) });
       const data = await res.json();
@@ -275,28 +379,35 @@ export default function App() {
     setBriefingLoading(false);
   };
 
+  const generateEmail = async () => {
+    if (!emailContext.trim() || !emailType) return;
+    setEmailLoading(true); setEmailResult(null);
+    const typeLabel = EMAIL_TYPES.find(t => t.key === emailType)?.label || emailType;
+    try {
+      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:EMAIL_DRAFT_SYSTEM(profile, `Type: ${typeLabel}\n${emailContext}`) }], stream:false }) });
+      const data = await res.json();
+      const content = data.message?.content || "";
+      const conciseMatch = content.match(/---CONCISE---\n([\s\S]*?)(?=---DETAILED---|$)/);
+      const detailedMatch = content.match(/---DETAILED---\n([\s\S]*?)$/);
+      setEmailResult({ concise: conciseMatch?.[1]?.trim() || content, detailed: detailedMatch?.[1]?.trim() || "" });
+    } catch { setEmailResult({ concise:"Couldn't connect to Ollama. Make sure it's running.", detailed:"" }); }
+    setEmailLoading(false);
+  };
+
+  const saveDraft = () => {
+    if (!emailResult) return;
+    const draft = { id:Date.now(), type:emailType, context:emailContext, concise:emailResult.concise, detailed:emailResult.detailed, date:new Date().toLocaleDateString(), created:new Date().toISOString() };
+    setEmailDrafts(prev => [draft, ...prev].slice(0, 50));
+    setSavedDraft(true); setTimeout(() => setSavedDraft(false), 2000);
+  };
+
+  const copyToClipboard = (text, version) => { navigator.clipboard.writeText(text); setCopiedVersion(version); setTimeout(() => setCopiedVersion(""), 2000); };
+
   const generateGrowthInsight = async () => {
     setGrowthInsightLoading(true); setGrowthInsight("");
-    const goals = growthData[growthTab] || [];
-    const recentWins = wins.filter(w => w.category === growthTab).slice(0, 5);
+    const goals = growthData[growthTab] || []; const recentWins = wins.filter(w => w.category === growthTab).slice(0, 5);
     try {
-      const res = await fetch(OLLAMA_URL, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"mistral-nemo:latest",
-          messages:[{ role:"user", content:`You are Luma, a warm personal AI coach. Give a short (3-4 sentence), specific, encouraging insight and ONE clear next step for this person's ${growthTab} growth.
-
-Name: ${profile.name || ""}
-Goals in this area: ${goals.map(g => `${g.title} (${g.progress}% complete)`).join(", ") || "none set yet"}
-Recent wins: ${recentWins.map(w => w.text).join(", ") || "none logged yet"}
-Career: ${profile.career || ""}
-Overall goals: ${profile.goals || ""}
-Condition: ${profile.condition || "none"}
-
-Be warm, specific, and genuinely helpful. Reference their actual goals and wins if available.` }],
-          stream:false
-        })
-      });
+      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:`You are Luma, a warm personal AI coach. Give a short (3-4 sentence), specific, encouraging insight and ONE clear next step for this person's ${growthTab} growth.\n\nName: ${profile.name||""}\nGoals: ${goals.map(g=>`${g.title} (${g.progress}% complete)`).join(", ")||"none set yet"}\nRecent wins: ${recentWins.map(w=>w.text).join(", ")||"none logged yet"}\nCareer: ${profile.career||""}\nConditions: ${(profile.conditions||[]).join(", ")||"none"}\n\nBe warm, specific, and genuinely helpful.` }], stream:false }) });
       const data = await res.json();
       setGrowthInsight(data.message?.content || "Keep going — every step forward counts.");
     } catch { setGrowthInsight("Keep going — every step forward counts."); }
@@ -307,11 +418,11 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
     if (suggestingTasks) return;
     setSuggestingTasks(true); setSuggestedTasks([]);
     try {
-      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:`Based on this person's goals and profile, suggest 5 specific actionable tasks. Return ONLY a JSON array: ["task 1","task 2","task 3","task 4","task 5"]. No other text.\nName: ${profile.name||""}\nGoals: ${profile.goals||""}\nCareer: ${profile.career||""}\nCondition: ${profile.condition||"none"}\nCurrent tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ")||"none"}` }], stream:false }) });
+      const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"user", content:`Suggest 5 specific actionable tasks. Return ONLY a JSON array: ["task 1","task 2","task 3","task 4","task 5"]. No other text.\nName: ${profile.name||""}\nGoals: ${profile.goals||""}\nCareer: ${profile.career||""}\nConditions: ${(profile.conditions||[]).join(", ")||"none"}\nCurrent tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ")||"none"}` }], stream:false }) });
       const data = await res.json();
       const match = (data.message?.content || "[]").match(/\[[\s\S]*?\]/);
       if (match) setSuggestedTasks(JSON.parse(match[0]));
-    } catch { setSuggestedTasks(["Check in with your goals today","Do one small thing toward your career","Take 5 minutes to plan your week","Reach out to someone important to you","Do something kind for yourself"]); }
+    } catch { setSuggestedTasks(["Check in with your goals today","Do one small thing toward your career","Take 5 minutes to plan your week","Reach out to someone important","Do something kind for yourself"]); }
     setSuggestingTasks(false);
   };
 
@@ -332,10 +443,8 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
 
   const sendMessage = async (text) => {
     const msg = text || ""; if (!msg.trim() || loading) return;
-    setInput("");
-    const userMsg = { role:"user", content:msg };
-    const updated = [...messages, userMsg];
-    setMessages(updated); setLoading(true); setScreen("chat");
+    setInput(""); const userMsg = { role:"user", content:msg };
+    const updated = [...messages, userMsg]; setMessages(updated); setLoading(true); setScreen("chat");
     const memoryContext = buildMemoryContext(conversations);
     try {
       const res = await fetch(OLLAMA_URL, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"mistral-nemo:latest", messages:[{ role:"system", content:LUMA_SYSTEM(profile, memoryContext) }, ...updated.slice(-MAX_MEMORY_MESSAGES)], stream:false }) });
@@ -370,24 +479,24 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
     else { setGrowthData(p => ({ ...p, [newGoal.category]: [...existing, goal] })); }
     setNewGoal({ title:"", category:growthTab, description:"", targetDate:"", progress:0 }); setShowAddGoal(false); setEditingGoal(null);
   };
-
   const updateGoalProgress = (category, id, progress) => { setGrowthData(p => ({ ...p, [category]: (p[category]||[]).map(g => g.id===id?{...g,progress}:g) })); };
   const deleteGoal = (category, id) => { setGrowthData(p => ({ ...p, [category]: (p[category]||[]).filter(g => g.id!==id) })); };
-
-  const saveWin = () => {
-    if (!newWin.text.trim()) return;
-    const win = { ...newWin, id:Date.now(), date:newWin.date || new Date().toLocaleDateString(), created:new Date().toISOString() };
-    setWins(prev => [win, ...prev]);
-    setNewWin({ text:"", category:growthTab, date:"" }); setShowAddWin(false);
-  };
+  const saveWin = () => { if (!newWin.text.trim()) return; setWins(prev => [{ ...newWin, id:Date.now(), date:newWin.date||new Date().toLocaleDateString(), created:new Date().toISOString() }, ...prev]); setNewWin({ text:"", category:growthTab, date:"" }); setShowAddWin(false); };
   const deleteWin = (id) => setWins(prev => prev.filter(w => w.id!==id));
 
+  const toggleCondition = (key, arr, setArr) => { setArr(prev => prev.includes(key) ? prev.filter(c => c !== key) : [...prev, key]); };
+
   const nextOnboardingStep = () => {
-    const step = ONBOARDING_STEPS[onboardingStep]; const value = step.type==="select"?onboardingSelect:onboardingInput;
-    const updated = { ...onboardingData, [step.key]:value }; setOnboardingData(updated); setOnboardingInput(""); setOnboardingSelect("none");
-    if (onboardingStep < ONBOARDING_STEPS.length-1) { setOnboardingStep(s=>s+1); } else { setProfile(updated); setShowOnboarding(false); }
+    const step = ONBOARDING_STEPS[onboardingStep];
+    let value = onboardingInput;
+    if (step.type === "conditions") value = onboardingConditions;
+    const updated = { ...onboardingData, [step.key]:value };
+    if (step.type === "conditions") updated.customConditions = onboardingCustomConditions;
+    setOnboardingData(updated); setOnboardingInput("");
+    if (onboardingStep < ONBOARDING_STEPS.length-1) { setOnboardingStep(s=>s+1); }
+    else { setProfile({ ...updated, conditions:onboardingConditions, customConditions:onboardingCustomConditions }); setShowOnboarding(false); }
   };
-  const skipOnboarding = () => { setProfile(onboardingData); setShowOnboarding(false); };
+  const skipOnboarding = () => { setProfile({ ...onboardingData, conditions:onboardingConditions, customConditions:onboardingCustomConditions }); setShowOnboarding(false); };
   const saveProfile = () => { setProfile(profileDraft); setEditingProfile(false); };
 
   const currentStep = ONBOARDING_STEPS[onboardingStep];
@@ -399,6 +508,10 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
   const overdueCount = tasks.filter(t => !t.done && t.overdue).length;
   const totalGoals = Object.values(growthData).flat().length;
   const totalWins = wins.length;
+  const profileConditions = Array.isArray(profile.conditions) ? profile.conditions : [];
+  const currentCat = GROWTH_CATEGORIES.find(c => c.key === growthTab);
+  const currentGoals = growthData[growthTab] || [];
+  const currentWins = wins.filter(w => w.category === growthTab);
 
   const getFilteredTasks = () => {
     let filtered = tasks;
@@ -409,9 +522,45 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
     return filtered.sort((a,b) => { if (taskSort==="priority") { const o={urgent:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); } if (taskSort==="due") return (a.dueDate||"9999")<(b.dueDate||"9999")?-1:1; return 0; });
   };
 
-  const currentCat = GROWTH_CATEGORIES.find(c => c.key === growthTab);
-  const currentGoals = growthData[growthTab] || [];
-  const currentWins = wins.filter(w => w.category === growthTab);
+  const groupedConditions = ALL_CONDITIONS.reduce((acc, c) => { if (!acc[c.group]) acc[c.group] = []; acc[c.group].push(c); return acc; }, {});
+  const filteredConditions = conditionSearch ? ALL_CONDITIONS.filter(c => c.label.toLowerCase().includes(conditionSearch.toLowerCase())) : null;
+
+  const ConditionPicker = ({ selected, onToggle, customValue, onCustomChange }) => (
+    <div>
+      <input value={conditionSearch} onChange={e => setConditionSearch(e.target.value)} placeholder="Search conditions…" style={{ width:"100%", background:"rgba(255,255,255,0.85)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"12px", padding:"10px 14px", color:"#1a1a1a", fontSize:"14px", fontFamily:"'Nunito',sans-serif", fontWeight:600, marginBottom:"14px" }} />
+      <div style={{ maxHeight:"280px", overflowY:"auto" }}>
+        {filteredConditions ? (
+          <div style={{ display:"flex", flexWrap:"wrap", gap:"6px" }}>
+            {filteredConditions.map(c => (
+              <button key={c.key} onClick={() => onToggle(c.key)} style={{ padding:"6px 12px", borderRadius:"100px", border:`0.5px solid ${selected.includes(c.key)?"rgba(14,165,233,0.4)":"rgba(26,26,26,0.1)"}`, background:selected.includes(c.key)?"rgba(14,165,233,0.1)":"rgba(255,255,255,0.6)", color:selected.includes(c.key)?"#0ea5e9":"rgba(26,26,26,0.5)", fontSize:"13px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }}>
+                {selected.includes(c.key) ? "✓ " : ""}{c.label}
+              </button>
+            ))}
+          </div>
+        ) : Object.entries(groupedConditions).map(([group, items]) => (
+          <div key={group} style={{ marginBottom:"16px" }}>
+            <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.3)", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:"8px" }}>{group}</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:"6px" }}>
+              {items.map(c => (
+                <button key={c.key} onClick={() => onToggle(c.key)} style={{ padding:"6px 12px", borderRadius:"100px", border:`0.5px solid ${selected.includes(c.key)?"rgba(14,165,233,0.4)":"rgba(26,26,26,0.1)"}`, background:selected.includes(c.key)?"rgba(14,165,233,0.1)":"rgba(255,255,255,0.6)", color:selected.includes(c.key)?"#0ea5e9":"rgba(26,26,26,0.5)", fontSize:"13px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }}>
+                  {selected.includes(c.key) ? "✓ " : ""}{c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop:"16px" }}>
+        <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.35)", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:"6px" }}>Not listed? Describe your condition(s)</div>
+        <textarea value={customValue} onChange={e => onCustomChange(e.target.value)} placeholder="e.g. I have hypermobile EDS, POTS, and mast cell activation syndrome…" rows={2} style={{ width:"100%", background:"rgba(255,255,255,0.85)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"12px", padding:"10px 14px", color:"#1a1a1a", fontSize:"14px", fontFamily:"'Nunito',sans-serif", fontWeight:500, resize:"none", lineHeight:1.5 }} />
+      </div>
+      {selected.length > 0 && (
+        <div style={{ marginTop:"12px", fontSize:"13px", fontWeight:700, color:"#0ea5e9" }}>
+          {selected.length} selected: {selected.map(k => ALL_CONDITIONS.find(c => c.key===k)?.label || k).join(", ")}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div style={{ minHeight:"100vh", background:"#f5f2ee", fontFamily:"'Nunito',-apple-system,sans-serif", color:"#1a1a1a", position:"relative", overflow:"hidden" }}>
@@ -429,18 +578,16 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
         @keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,69,58,0.4)}50%{box-shadow:0 0 0 10px rgba(255,69,58,0)}}
         @keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
         @keyframes briefingIn{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes progressFill{from{width:0}to{width:var(--progress)}}
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:0;}
         ::placeholder{color:rgba(26,26,26,0.25);font-family:'Nunito',sans-serif;}
         textarea:focus,input:focus,select:focus{outline:none;}
         .aurora-text{background:linear-gradient(135deg,#00c896,#0ea5e9,#8b5cf6,#ec4899,#00c896);background-size:300% 100%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:shimmer 6s linear infinite;}
         .nav-glass{background:rgba(245,242,238,0.82);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border-bottom:0.5px solid rgba(26,26,26,0.06);}
-        .nav-btn{background:transparent;border:none;color:rgba(26,26,26,0.38);font-size:15px;font-weight:700;cursor:pointer;padding:8px 18px;border-radius:100px;transition:all 0.2s;font-family:'Nunito',sans-serif;}
+        .nav-btn{background:transparent;border:none;color:rgba(26,26,26,0.38);font-size:14px;font-weight:700;cursor:pointer;padding:7px 14px;border-radius:100px;transition:all 0.2s;font-family:'Nunito',sans-serif;}
         .nav-btn:hover{color:#1a1a1a;background:rgba(26,26,26,0.06);}
         .nav-btn.active{color:#1a1a1a;background:rgba(26,26,26,0.08);}
         .card{background:rgba(255,255,255,0.75);border:0.5px solid rgba(26,26,26,0.07);border-radius:24px;backdrop-filter:blur(20px);transition:all 0.3s cubic-bezier(0.34,1.4,0.64,1);}
-        .card-hover:hover{background:rgba(255,255,255,0.92);transform:translateY(-2px);box-shadow:0 8px 40px rgba(0,0,0,0.06);}
         .input-wrap{background:rgba(255,255,255,0.75);border:0.5px solid rgba(26,26,26,0.09);border-radius:28px;backdrop-filter:blur(20px);transition:border-color 0.2s,box-shadow 0.2s;}
         .input-wrap:focus-within{border-color:rgba(26,26,26,0.15);box-shadow:0 4px 32px rgba(0,0,0,0.06);}
         .suggest-btn{background:rgba(255,255,255,0.6);border:0.5px solid rgba(26,26,26,0.07);border-radius:18px;padding:18px 22px;cursor:pointer;color:#1a1a1a;font-size:17px;font-weight:700;font-family:'Nunito',sans-serif;text-align:left;display:flex;align-items:center;justify-content:space-between;transition:all 0.25s;width:100%;}
@@ -449,7 +596,6 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
         .send-btn:hover:not(:disabled){transform:scale(1.08);}
         .mic-btn{transition:all 0.22s;}
         .mic-btn.listening{animation:micPulse 1.5s ease-in-out infinite;}
-        .task-row{transition:all 0.2s;}
         .task-row:hover .del-btn{opacity:1!important;}
         .task-row:hover .edit-btn{opacity:1!important;}
         .goal-row:hover .goal-del{opacity:1!important;}
@@ -460,7 +606,6 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
         .pill-dot{width:6px;height:6px;border-radius:50%;background:linear-gradient(135deg,#00c896,#0ea5e9);animation:pulse 2s infinite;}
         .ob-input{width:100%;background:rgba(255,255,255,0.85);border:0.5px solid rgba(26,26,26,0.1);border-radius:18px;padding:18px 22px;color:#1a1a1a;font-size:17px;font-family:'Nunito',sans-serif;font-weight:600;transition:all 0.2s;}
         .ob-input:focus{border-color:rgba(14,165,233,0.35);box-shadow:0 0 0 4px rgba(14,165,233,0.08);}
-        .ob-select{width:100%;background:rgba(255,255,255,0.85);border:0.5px solid rgba(26,26,26,0.1);border-radius:18px;padding:18px 22px;color:#1a1a1a;font-size:17px;font-family:'Nunito',sans-serif;font-weight:600;transition:all 0.2s;appearance:none;cursor:pointer;}
         .ob-btn{padding:16px 36px;border:none;border-radius:18px;font-size:17px;font-weight:900;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.25s;background:linear-gradient(135deg,#00c896,#0ea5e9);color:#fff;}
         .ob-btn:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(14,165,233,0.25);}
         .section-scroll{flex:1;overflow-y:auto;padding:28px 24px;}
@@ -482,6 +627,14 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
         .growth-tab-btn{padding:8px 18px;border-radius:100px;border:0.5px solid rgba(26,26,26,0.09);background:rgba(255,255,255,0.6);font-size:14px;font-weight:700;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;display:flex;align-items:center;gap:6px;}
         input[type="range"]{-webkit-appearance:none;width:100%;height:4px;border-radius:100px;outline:none;cursor:pointer;}
         input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#00c896,#0ea5e9);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15);}
+        .email-type-btn{padding:12px 16px;border-radius:16px;border:0.5px solid rgba(26,26,26,0.08);background:rgba(255,255,255,0.6);color:rgba(26,26,26,0.55);font-size:14px;font-weight:700;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;text-align:left;display:flex;align-items:center;gap:10px;}
+        .email-type-btn:hover{background:rgba(255,255,255,0.9);color:#1a1a1a;transform:translateY(-1px);}
+        .email-type-btn.active{background:rgba(14,165,233,0.08);border-color:rgba(14,165,233,0.25);color:#0ea5e9;}
+        .copy-btn{padding:10px 18px;border-radius:12px;border:0.5px solid rgba(26,26,26,0.09);background:rgba(255,255,255,0.7);color:rgba(26,26,26,0.5);font-size:13px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;}
+        .copy-btn:hover{background:rgba(255,255,255,0.95);color:#1a1a1a;}
+        .copy-btn.copied{background:rgba(0,200,150,0.1);border-color:rgba(0,200,150,0.25);color:#00a87c;}
+        .tab-btn{padding:8px 18px;border-radius:100px;border:none;background:transparent;color:rgba(26,26,26,0.4);font-size:14px;font-weight:700;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;}
+        .tab-btn.active{background:rgba(26,26,26,0.08);color:#1a1a1a;}
       `}</style>
 
       {/* Aurora orbs */}
@@ -495,22 +648,20 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
       {/* Onboarding */}
       {showOnboarding && (
         <div style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(245,242,238,0.9)", backdropFilter:"blur(24px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px", animation:"fadeIn 0.4s ease" }}>
-          <div style={{ background:"rgba(255,255,255,0.88)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"36px", padding:"52px 48px", maxWidth:"500px", width:"100%", animation:"slideUp 0.5s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)" }}>
-            <div style={{ display:"flex", gap:"8px", marginBottom:"40px", justifyContent:"center" }}>
+          <div style={{ background:"rgba(255,255,255,0.88)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"36px", padding:"44px 40px", maxWidth: currentStep.type==="conditions"?"680px":"500px", width:"100%", animation:"slideUp 0.5s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)", maxHeight:"90vh", overflowY:"auto" }}>
+            <div style={{ display:"flex", gap:"8px", marginBottom:"32px", justifyContent:"center" }}>
               {ONBOARDING_STEPS.map((_,i) => <div key={i} style={{ width:i===onboardingStep?"28px":"8px", height:"8px", borderRadius:"100px", background:i<=onboardingStep?"linear-gradient(90deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.1)", transition:"all 0.35s" }} />)}
             </div>
-            <div style={{ textAlign:"center", marginBottom:"36px" }}>
-              <div style={{ fontSize:"40px", fontWeight:900, letterSpacing:"-0.02em", marginBottom:"6px" }}><span className="aurora-text">Luma</span></div>
-              <div style={{ fontSize:"13px", fontWeight:700, color:"rgba(26,26,26,0.3)", letterSpacing:"0.1em", textTransform:"uppercase" }}>Your life. Illuminated.</div>
+            <div style={{ textAlign:"center", marginBottom:"28px" }}>
+              <div style={{ fontSize:"36px", fontWeight:900, letterSpacing:"-0.02em", marginBottom:"6px" }}><span className="aurora-text">Luma</span></div>
+              <div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)", letterSpacing:"0.1em", textTransform:"uppercase" }}>Your life. Illuminated.</div>
             </div>
-            <div style={{ marginBottom:"24px" }}>
-              <h2 style={{ fontSize:"24px", fontWeight:800, lineHeight:1.3, marginBottom:"10px" }}>{currentStep.question}</h2>
-              <p style={{ fontSize:"14px", color:"rgba(26,26,26,0.38)", fontWeight:500, lineHeight:1.6 }}>{currentStep.hint}</p>
+            <div style={{ marginBottom:"20px" }}>
+              <h2 style={{ fontSize:"22px", fontWeight:800, lineHeight:1.3, marginBottom:"8px" }}>{currentStep.question}</h2>
+              <p style={{ fontSize:"13px", color:"rgba(26,26,26,0.38)", fontWeight:500, lineHeight:1.6 }}>{currentStep.hint}</p>
             </div>
-            {currentStep.type==="select" ? (
-              <select className="ob-select" value={onboardingSelect} onChange={e=>setOnboardingSelect(e.target.value)}>
-                {currentStep.options.map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </select>
+            {currentStep.type === "conditions" ? (
+              <ConditionPicker selected={onboardingConditions} onToggle={(key) => toggleCondition(key, onboardingConditions, setOnboardingConditions)} customValue={onboardingCustomConditions} onCustomChange={setOnboardingCustomConditions} />
             ) : (
               <input className="ob-input" value={onboardingInput} onChange={e=>setOnboardingInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&nextOnboardingStep()} placeholder={currentStep.placeholder} autoFocus />
             )}
@@ -553,26 +704,14 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
         <div style={{ position:"fixed", inset:0, zIndex:150, background:"rgba(245,242,238,0.88)", backdropFilter:"blur(24px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px", animation:"fadeIn 0.3s ease" }}>
           <div style={{ background:"rgba(255,255,255,0.92)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"32px", padding:"36px", maxWidth:"500px", width:"100%", animation:"slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)", maxHeight:"90vh", overflowY:"auto" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"28px" }}>
-              <h2 style={{ fontSize:"22px", fontWeight:900, letterSpacing:"-0.02em" }}>{editingGoal?"Edit Goal":"New Goal"}</h2>
-              <button onClick={()=>{setShowAddGoal(false);setEditingGoal(null);setNewGoal({title:"",category:growthTab,description:"",targetDate:"",progress:0});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
+              <h2 style={{ fontSize:"22px", fontWeight:900 }}>{editingGoal?"Edit Goal":"New Goal"}</h2>
+              <button onClick={()=>{setShowAddGoal(false);setEditingGoal(null);}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
             </div>
             <div style={{ marginBottom:"20px" }}><label className="field-label">Goal Title</label><input value={newGoal.title} onChange={e=>setNewGoal(p=>({...p,title:e.target.value}))} placeholder="What do you want to achieve?" className="field-input" autoFocus /></div>
-            <div style={{ marginBottom:"20px" }}>
-              <label className="field-label">Category</label>
-              <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
-                {GROWTH_CATEGORIES.map(cat=>(
-                  <button key={cat.key} onClick={()=>setNewGoal(p=>({...p,category:cat.key}))} style={{ padding:"8px 14px", borderRadius:"10px", border:`0.5px solid ${newGoal.category===cat.key?cat.color+"50":"rgba(26,26,26,0.1)"}`, background:newGoal.category===cat.key?cat.bg:"transparent", color:newGoal.category===cat.key?cat.color:"rgba(26,26,26,0.4)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
-                    {cat.icon} {cat.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Category</label><div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>{GROWTH_CATEGORIES.map(cat=><button key={cat.key} onClick={()=>setNewGoal(p=>({...p,category:cat.key}))} style={{ padding:"8px 14px", borderRadius:"10px", border:`0.5px solid ${newGoal.category===cat.key?cat.color+"50":"rgba(26,26,26,0.1)"}`, background:newGoal.category===cat.key?cat.bg:"transparent", color:newGoal.category===cat.key?cat.color:"rgba(26,26,26,0.4)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{cat.icon} {cat.label}</button>)}</div></div>
             <div style={{ marginBottom:"20px" }}><label className="field-label">Description (optional)</label><textarea value={newGoal.description} onChange={e=>setNewGoal(p=>({...p,description:e.target.value}))} placeholder="What does success look like?" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} /></div>
-            <div style={{ marginBottom:"20px" }}><label className="field-label">Target Date (optional)</label><input type="date" value={newGoal.targetDate} onChange={e=>setNewGoal(p=>({...p,targetDate:e.target.value}))} className="field-input" /></div>
-            <div style={{ marginBottom:"28px" }}>
-              <label className="field-label">Starting Progress — {newGoal.progress}%</label>
-              <input type="range" min="0" max="100" value={newGoal.progress} onChange={e=>setNewGoal(p=>({...p,progress:parseInt(e.target.value)}))} style={{ background:`linear-gradient(to right, #00c896 ${newGoal.progress}%, rgba(26,26,26,0.1) ${newGoal.progress}%)` }} />
-            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Target Date</label><input type="date" value={newGoal.targetDate} onChange={e=>setNewGoal(p=>({...p,targetDate:e.target.value}))} className="field-input" /></div>
+            <div style={{ marginBottom:"28px" }}><label className="field-label">Starting Progress — {newGoal.progress}%</label><input type="range" min="0" max="100" value={newGoal.progress} onChange={e=>setNewGoal(p=>({...p,progress:parseInt(e.target.value)}))} style={{ background:`linear-gradient(to right, #00c896 ${newGoal.progress}%, rgba(26,26,26,0.1) ${newGoal.progress}%)` }} /></div>
             <div style={{ display:"flex", gap:"10px" }}>
               <button onClick={saveGoal} disabled={!newGoal.title.trim()} style={{ flex:1, padding:"14px", background:newGoal.title.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newGoal.title.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newGoal.title.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>{editingGoal?"Save Changes":"Add Goal"}</button>
               <button onClick={()=>{setShowAddGoal(false);setEditingGoal(null);}} style={{ padding:"14px 20px", background:"rgba(26,26,26,0.05)", border:"none", borderRadius:"16px", color:"rgba(26,26,26,0.4)", fontSize:"15px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Cancel</button>
@@ -586,22 +725,14 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
         <div style={{ position:"fixed", inset:0, zIndex:150, background:"rgba(245,242,238,0.88)", backdropFilter:"blur(24px)", display:"flex", alignItems:"center", justifyContent:"center", padding:"24px", animation:"fadeIn 0.3s ease" }}>
           <div style={{ background:"rgba(255,255,255,0.92)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"32px", padding:"36px", maxWidth:"480px", width:"100%", animation:"slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"28px" }}>
-              <h2 style={{ fontSize:"22px", fontWeight:900, letterSpacing:"-0.02em" }}>Log a Win</h2>
-<button onClick={()=>{setShowAddWin(false);setNewWin({text:"",category:growthTab,date:""});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>            </div>
+              <h2 style={{ fontSize:"22px", fontWeight:900 }}>Log a Win</h2>
+              <button onClick={()=>setShowAddWin(false)} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
+            </div>
             <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"16px", padding:"14px 18px", marginBottom:"24px" }}>
               <div style={{ fontSize:"14px", fontWeight:600, color:"#00a87c", lineHeight:1.6 }}>Every win counts — big or small. Getting out of bed, sending one email, finishing a task. All of it matters.</div>
             </div>
             <div style={{ marginBottom:"20px" }}><label className="field-label">What did you accomplish?</label><textarea value={newWin.text} onChange={e=>setNewWin(p=>({...p,text:e.target.value}))} placeholder="e.g. I finally sent that email I'd been putting off…" rows={3} className="field-input" style={{ resize:"none", lineHeight:1.5 }} autoFocus /></div>
-            <div style={{ marginBottom:"20px" }}>
-              <label className="field-label">Category</label>
-              <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
-                {GROWTH_CATEGORIES.map(cat=>(
-                  <button key={cat.key} onClick={()=>setNewWin(p=>({...p,category:cat.key}))} style={{ padding:"8px 14px", borderRadius:"10px", border:`0.5px solid ${newWin.category===cat.key?cat.color+"50":"rgba(26,26,26,0.1)"}`, background:newWin.category===cat.key?cat.bg:"transparent", color:newWin.category===cat.key?cat.color:"rgba(26,26,26,0.4)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
-                    {cat.icon} {cat.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <div style={{ marginBottom:"20px" }}><label className="field-label">Category</label><div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>{GROWTH_CATEGORIES.map(cat=><button key={cat.key} onClick={()=>setNewWin(p=>({...p,category:cat.key}))} style={{ padding:"8px 14px", borderRadius:"10px", border:`0.5px solid ${newWin.category===cat.key?cat.color+"50":"rgba(26,26,26,0.1)"}`, background:newWin.category===cat.key?cat.bg:"transparent", color:newWin.category===cat.key?cat.color:"rgba(26,26,26,0.4)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{cat.icon} {cat.label}</button>)}</div></div>
             <div style={{ marginBottom:"28px" }}><label className="field-label">Date (optional)</label><input type="date" value={newWin.date} onChange={e=>setNewWin(p=>({...p,date:e.target.value}))} className="field-input" /></div>
             <div style={{ display:"flex", gap:"10px" }}>
               <button onClick={saveWin} disabled={!newWin.text.trim()} style={{ flex:1, padding:"14px", background:newWin.text.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newWin.text.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newWin.text.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>Log this Win</button>
@@ -636,24 +767,29 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
       )}
 
       {/* Nav */}
-      <nav className="nav-glass" style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, height:"64px", display:"flex", alignItems:"center", padding:"0 40px", justifyContent:"space-between" }}>
+      <nav className="nav-glass" style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, height:"64px", display:"flex", alignItems:"center", padding:"0 32px", justifyContent:"space-between" }}>
         <div className="luma-logo aurora-text" onClick={()=>setScreen("home")}>Luma</div>
-        <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
-          {profile.condition&&profile.condition!=="none"&&<span style={{ fontSize:"11px", fontWeight:800, color:conditionColors[profile.condition], background:`${conditionColors[profile.condition]}15`, padding:"4px 10px", borderRadius:"100px", marginRight:"4px" }}>{conditionLabels[profile.condition]}</span>}
+        <div style={{ display:"flex", alignItems:"center", gap:"4px" }}>
+          {profileConditions.length > 0 && (
+            <div style={{ display:"flex", gap:"4px", marginRight:"8px", flexWrap:"wrap", maxWidth:"200px" }}>
+              {profileConditions.slice(0,2).map(c => { const cond = ALL_CONDITIONS.find(ac => ac.key===c); return cond ? <span key={c} style={{ fontSize:"10px", fontWeight:800, color:"#0ea5e9", background:"rgba(14,165,233,0.1)", padding:"3px 8px", borderRadius:"100px", whiteSpace:"nowrap" }}>{cond.label}</span> : null; })}
+              {profileConditions.length > 2 && <span style={{ fontSize:"10px", fontWeight:800, color:"rgba(26,26,26,0.35)", background:"rgba(26,26,26,0.06)", padding:"3px 8px", borderRadius:"100px" }}>+{profileConditions.length-2}</span>}
+            </div>
+          )}
           <div style={{ display:"flex", alignItems:"center", gap:"5px", marginRight:"8px" }}>
             <div style={{ width:7, height:7, borderRadius:"50%", background:ollamaStatus==="online"?"#00c896":"#ff453a", boxShadow:ollamaStatus==="online"?"0 0 8px rgba(0,200,150,0.5)":"0 0 8px rgba(255,69,58,0.5)" }} />
-            <span style={{ fontSize:"13px", fontWeight:700, color:ollamaStatus==="online"?"#00a87c":"#ff453a" }}>{ollamaStatus==="online"?"Connected":"Offline"}</span>
+            <span style={{ fontSize:"12px", fontWeight:700, color:ollamaStatus==="online"?"#00a87c":"#ff453a" }}>{ollamaStatus==="online"?"Connected":"Offline"}</span>
           </div>
-          {[["home","Home"],["chat","Chat"],["tasks","Tasks"],["growth","Growth"],["profile","Profile"]].map(([s,l])=>(
+          {[["home","Home"],["chat","Chat"],["tasks","Tasks"],["growth","Growth"],["email","Email"],["profile","Profile"]].map(([s,l])=>(
             <button key={s} className={`nav-btn ${screen===s?"active":""}`} onClick={()=>setScreen(s)} style={{ position:"relative" }}>
               {l}
-              {s==="tasks"&&(urgentCount>0||overdueCount>0)&&<span style={{ position:"absolute", top:"4px", right:"8px", width:"7px", height:"7px", borderRadius:"50%", background:"#ff453a" }} />}
-              {s==="growth"&&totalWins>0&&<span style={{ position:"absolute", top:"4px", right:"8px", width:"6px", height:"6px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)" }} />}
+              {s==="tasks"&&(urgentCount>0||overdueCount>0)&&<span style={{ position:"absolute", top:"3px", right:"6px", width:"6px", height:"6px", borderRadius:"50%", background:"#ff453a" }} />}
+              {s==="email"&&emailDrafts.length>0&&<span style={{ position:"absolute", top:"3px", right:"6px", width:"6px", height:"6px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)" }} />}
             </button>
           ))}
           <button className={`nav-btn ${showMemory?"active":""}`} onClick={()=>setShowMemory(m=>!m)} style={{ position:"relative" }}>
             Memory
-            {conversations.length>0&&<span style={{ position:"absolute", top:"4px", right:"8px", width:"6px", height:"6px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)" }} />}
+            {conversations.length>0&&<span style={{ position:"absolute", top:"3px", right:"6px", width:"6px", height:"6px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)" }} />}
           </button>
         </div>
       </nav>
@@ -671,9 +807,7 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
                   </div>
                   <button onClick={()=>setBriefingDismissed(true)} style={{ background:"none", border:"none", fontSize:"18px", color:"rgba(26,26,26,0.25)", cursor:"pointer" }}>×</button>
                 </div>
-                {briefingLoading ? (
-                  <div>{[75,90,65,80].map((w,i)=><div key={i} style={{ height:"14px", borderRadius:"8px", marginBottom:"10px", width:`${w}%` }} className="briefing-shimmer" />)}<div style={{ fontSize:"13px", fontWeight:600, color:"rgba(26,26,26,0.3)", marginTop:"12px" }}>Generating your morning briefing…</div></div>
-                ) : (
+                {briefingLoading ? <div>{[75,90,65,80].map((w,i)=><div key={i} style={{ height:"14px", borderRadius:"8px", marginBottom:"10px", width:`${w}%` }} className="briefing-shimmer" />)}<div style={{ fontSize:"13px", fontWeight:600, color:"rgba(26,26,26,0.3)", marginTop:"12px" }}>Generating your morning briefing…</div></div> : (
                   <div>
                     <div style={{ fontSize:"16px", fontWeight:500, color:"#1a1a1a", lineHeight:1.72, whiteSpace:"pre-wrap", marginBottom:"20px" }}>{briefing}</div>
                     <div style={{ display:"flex", gap:"10px" }}>
@@ -686,7 +820,7 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
               </div>
             )}
             {!showBriefingCard&&lastSession&&(
-              <div style={{ background:"rgba(255,255,255,0.65)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"20px", padding:"16px 20px", marginBottom:"28px", backdropFilter:"blur(20px)", cursor:"pointer", animation:"fadeUp 0.5s ease" }} onClick={()=>loadConversation(lastSession)}>
+              <div style={{ background:"rgba(255,255,255,0.65)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"20px", padding:"16px 20px", marginBottom:"28px", backdropFilter:"blur(20px)", cursor:"pointer" }} onClick={()=>loadConversation(lastSession)}>
                 <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.3)", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:"6px" }}>Continue from last time · {lastSession.dateLabel}</div>
                 <div style={{ fontSize:"15px", fontWeight:600, color:"rgba(26,26,26,0.65)", lineHeight:1.5 }}>"{lastSession.messages.filter(m=>m.role==="user")[0]?.content.slice(0,100)}…"</div>
               </div>
@@ -715,9 +849,9 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
                 {[
-                  { label:"How are you doing today?", prompt:"Hey Luma. Check in with me — ask me how I'm doing and help me figure out what kind of support I need today." },
+                  { label:"How are you doing today?", prompt:"Hey Luma. Check in with me — ask how I'm doing and help me figure out what kind of support I need today." },
                   { label:"Help me start my day", prompt:"Give me my morning briefing. Help me start with intention — keep it gentle and simple." },
-                  { label:"I need help with something", prompt:"I need your help. Ask me what it is and let's work through it together at my own pace." }
+                  { label:"I need help with something", prompt:"I need your help. Ask me what it is and let's work through it at my own pace." }
                 ].map(s=>(
                   <button key={s.label} className="suggest-btn" onClick={()=>sendMessage(s.prompt)}>
                     <span>{s.label}</span><span style={{ fontSize:"16px", opacity:0.25 }}>→</span>
@@ -726,9 +860,9 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
               </div>
             </div>
             {tasks.filter(t=>!t.done).length>0&&(
-              <div style={{ marginTop:"40px", animation:"fadeUp 0.6s ease 0.3s both" }}>
+              <div style={{ marginTop:"36px", animation:"fadeUp 0.6s ease 0.3s both" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
-                  <div className="pill-label">{urgentCount>0&&<span style={{ color:"#ff453a" }}>{urgentCount} urgent · </span>}{todayCount>0&&<span style={{ color:"#0ea5e9" }}>{todayCount} due today · </span>}{tasks.filter(t=>!t.done).length} total pending</div>
+                  <div className="pill-label">{urgentCount>0&&<span style={{ color:"#ff453a" }}>{urgentCount} urgent · </span>}{todayCount>0&&<span style={{ color:"#0ea5e9" }}>{todayCount} due today · </span>}{tasks.filter(t=>!t.done).length} pending</div>
                   <button onClick={()=>setScreen("tasks")} style={{ fontSize:"13px", fontWeight:800, color:"rgba(26,26,26,0.3)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>See all</button>
                 </div>
                 {tasks.filter(t=>!t.done).sort((a,b)=>{const o={urgent:0,high:1,normal:2,low:3};return(o[a.priority]||2)-(o[b.priority]||2);}).slice(0,3).map(task=>{
@@ -741,7 +875,6 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
                 })}
               </div>
             )}
-            {/* Growth summary on home */}
             {(totalGoals > 0 || totalWins > 0) && (
               <div style={{ marginTop:"32px", animation:"fadeUp 0.6s ease 0.4s both" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
@@ -807,7 +940,7 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
       {screen==="tasks"&&(
         <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
           <div style={{ maxWidth:"720px", margin:"0 auto" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"24px", animation:"fadeUp 0.5s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"24px" }}>
               <div>
                 <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"6px" }}>Tasks</h2>
                 <div style={{ display:"flex", gap:"12px", fontSize:"13px", fontWeight:700 }}>
@@ -828,11 +961,7 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
               ))}
             </div>
             <div style={{ display:"flex", gap:"8px", marginBottom:"16px", flexWrap:"wrap", alignItems:"center" }}>
-              <div style={{ display:"flex", gap:"6px", flexWrap:"wrap" }}>
-                {[{key:"all",label:"All"},{key:"pending",label:"Pending"},{key:"today",label:"Today"},{key:"urgent",label:"Urgent"},{key:"done",label:"Done"}].map(f=>(
-                  <button key={f.key} className={`filter-btn ${taskFilter===f.key?"active":""}`} onClick={()=>setTaskFilter(f.key)}>{f.label}</button>
-                ))}
-              </div>
+              <div style={{ display:"flex", gap:"6px", flexWrap:"wrap" }}>{[{key:"all",label:"All"},{key:"pending",label:"Pending"},{key:"today",label:"Today"},{key:"urgent",label:"Urgent"},{key:"done",label:"Done"}].map(f=><button key={f.key} className={`filter-btn ${taskFilter===f.key?"active":""}`} onClick={()=>setTaskFilter(f.key)}>{f.label}</button>)}</div>
               <div style={{ marginLeft:"auto", display:"flex", gap:"6px" }}>
                 <button className={`filter-btn ${taskSort==="priority"?"active":""}`} onClick={()=>setTaskSort("priority")}>Priority</button>
                 <button className={`filter-btn ${taskSort==="due"?"active":""}`} onClick={()=>setTaskSort("due")}>Due date</button>
@@ -857,14 +986,12 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
             {getFilteredTasks().length===0 ? (
               <div style={{ textAlign:"center", padding:"60px 0", color:"rgba(26,26,26,0.2)" }}>
                 <div style={{ fontSize:"18px", fontWeight:800, marginBottom:"8px" }}>{taskFilter==="done"?"No completed tasks yet":"No tasks here"}</div>
-                <div style={{ fontSize:"15px" }}>{taskFilter==="today"?"Nothing due today — enjoy your day!":taskFilter==="urgent"?"No urgent tasks — you're doing great!":"Add one above or ask Luma to suggest some."}</div>
+                <div style={{ fontSize:"15px" }}>{taskFilter==="today"?"Nothing due today!":taskFilter==="urgent"?"No urgent tasks — great!":"Add one above or ask Luma to suggest some."}</div>
               </div>
             ) : getFilteredTasks().map(task=>{
               const p=PRIORITY_CONFIG[task.priority||"normal"]; const isOverdue=!task.done&&task.overdue;
               return (<div key={task.id} className="task-row" style={{ background:"rgba(255,255,255,0.72)", border:`0.5px solid ${isOverdue?"rgba(255,69,58,0.2)":task.done?"rgba(26,26,26,0.05)":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"15px 18px", marginBottom:"8px", backdropFilter:"blur(20px)", display:"flex", alignItems:"flex-start", gap:"12px" }}>
-                <div onClick={()=>toggleTask(task.id)} style={{ width:"22px", height:"22px", borderRadius:"7px", border:task.done?"none":`2px solid ${p.color}40`, background:task.done?"linear-gradient(135deg,#00c896,#0ea5e9)":"transparent", cursor:"pointer", flexShrink:0, marginTop:"2px", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  {task.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                </div>
+                <div onClick={()=>toggleTask(task.id)} style={{ width:"22px", height:"22px", borderRadius:"7px", border:task.done?"none":`2px solid ${p.color}40`, background:task.done?"linear-gradient(135deg,#00c896,#0ea5e9)":"transparent", cursor:"pointer", flexShrink:0, marginTop:"2px", display:"flex", alignItems:"center", justifyContent:"center" }}>{task.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}</div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap", marginBottom:"4px" }}>
                     <span style={{ fontSize:"16px", fontWeight:600, color:task.done?"rgba(26,26,26,0.25)":isOverdue?"#ff453a":"rgba(26,26,26,0.82)", textDecoration:task.done?"line-through":"none" }}>{task.text}</span>
@@ -891,120 +1018,182 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
       {screen==="growth"&&(
         <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
           <div style={{ maxWidth:"720px", margin:"0 auto" }}>
-            <div style={{ marginBottom:"28px", animation:"fadeUp 0.5s ease" }}>
+            <div style={{ marginBottom:"28px" }}>
               <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"8px" }}>Growth</h2>
               <p style={{ fontSize:"17px", color:"rgba(26,26,26,0.36)", fontWeight:500 }}>Track your goals, log your wins, and see how far you've come.</p>
             </div>
-
-            {/* Overall stats */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"24px" }}>
-              {GROWTH_CATEGORIES.map(cat=>{
-                const catGoals = growthData[cat.key] || [];
-                const catWins = wins.filter(w => w.category === cat.key);
-                return (
-                  <div key={cat.key} onClick={()=>setGrowthTab(cat.key)} style={{ background:growthTab===cat.key?cat.bg:"rgba(255,255,255,0.72)", border:`0.5px solid ${growthTab===cat.key?cat.color+"30":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"16px", backdropFilter:"blur(20px)", textAlign:"center", cursor:"pointer", transition:"all 0.25s" }}>
-                    <div style={{ fontSize:"22px", marginBottom:"4px" }}>{cat.icon}</div>
-                    <div style={{ fontSize:"13px", fontWeight:800, color:growthTab===cat.key?cat.color:"rgba(26,26,26,0.5)", marginBottom:"4px" }}>{cat.label}</div>
-                    <div style={{ fontSize:"11px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>{catGoals.length}G · {catWins.length}W</div>
-                  </div>
-                );
-              })}
+              {GROWTH_CATEGORIES.map(cat=>{const catGoals=growthData[cat.key]||[];const catWins=wins.filter(w=>w.category===cat.key);return(<div key={cat.key} onClick={()=>setGrowthTab(cat.key)} style={{ background:growthTab===cat.key?cat.bg:"rgba(255,255,255,0.72)", border:`0.5px solid ${growthTab===cat.key?cat.color+"30":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"16px", backdropFilter:"blur(20px)", textAlign:"center", cursor:"pointer", transition:"all 0.25s" }}><div style={{ fontSize:"22px", marginBottom:"4px" }}>{cat.icon}</div><div style={{ fontSize:"13px", fontWeight:800, color:growthTab===cat.key?cat.color:"rgba(26,26,26,0.5)", marginBottom:"4px" }}>{cat.label}</div><div style={{ fontSize:"11px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>{catGoals.length}G · {catWins.length}W</div></div>);})}
             </div>
-
-            {/* Category tabs */}
             <div style={{ display:"flex", gap:"8px", marginBottom:"24px", flexWrap:"wrap" }}>
-              {GROWTH_CATEGORIES.map(cat=>(
-                <button key={cat.key} className="growth-tab-btn" onClick={()=>setGrowthTab(cat.key)} style={{ background:growthTab===cat.key?cat.bg:"rgba(255,255,255,0.6)", borderColor:growthTab===cat.key?cat.color+"40":"rgba(26,26,26,0.09)", color:growthTab===cat.key?cat.color:"rgba(26,26,26,0.5)" }}>
-                  {cat.icon} {cat.label}
-                </button>
-              ))}
+              {GROWTH_CATEGORIES.map(cat=><button key={cat.key} className="growth-tab-btn" onClick={()=>setGrowthTab(cat.key)} style={{ background:growthTab===cat.key?cat.bg:"rgba(255,255,255,0.6)", borderColor:growthTab===cat.key?cat.color+"40":"rgba(26,26,26,0.09)", color:growthTab===cat.key?cat.color:"rgba(26,26,26,0.5)" }}>{cat.icon} {cat.label}</button>)}
             </div>
-
-            {/* AI Insight */}
             <div style={{ background:"rgba(255,255,255,0.75)", border:`0.5px solid ${currentCat.color}20`, borderRadius:"22px", padding:"22px 24px", marginBottom:"20px", backdropFilter:"blur(20px)" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"12px" }}>
                 <div style={{ fontSize:"13px", fontWeight:800, color:currentCat.color, letterSpacing:"0.06em", textTransform:"uppercase" }}>Luma's {currentCat.label} Insight</div>
-                <button onClick={generateGrowthInsight} disabled={growthInsightLoading} style={{ padding:"7px 14px", background:currentCat.bg, border:`0.5px solid ${currentCat.color}30`, borderRadius:"10px", color:currentCat.color, fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
-                  {growthInsightLoading?"Thinking…":"Get Insight"}
-                </button>
+                <button onClick={generateGrowthInsight} disabled={growthInsightLoading} style={{ padding:"7px 14px", background:currentCat.bg, border:`0.5px solid ${currentCat.color}30`, borderRadius:"10px", color:currentCat.color, fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{growthInsightLoading?"Thinking…":"Get Insight"}</button>
               </div>
-              {growthInsightLoading ? (
-                <div>{[80,65,90].map((w,i)=><div key={i} style={{ height:"13px", borderRadius:"8px", marginBottom:"8px", width:`${w}%` }} className="briefing-shimmer" />)}</div>
-              ) : growthInsight ? (
-                <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.72)", lineHeight:1.7, whiteSpace:"pre-wrap" }}>{growthInsight}</div>
-              ) : (
-                <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.35)", lineHeight:1.7 }}>Click "Get Insight" for personalized {currentCat.label.toLowerCase()} coaching from Luma.</div>
-              )}
+              {growthInsightLoading?<div>{[80,65,90].map((w,i)=><div key={i} style={{ height:"13px", borderRadius:"8px", marginBottom:"8px", width:`${w}%` }} className="briefing-shimmer" />)}</div>:growthInsight?<div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.72)", lineHeight:1.7, whiteSpace:"pre-wrap" }}>{growthInsight}</div>:<div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.35)", lineHeight:1.7 }}>Click "Get Insight" for personalized {currentCat.label.toLowerCase()} coaching from Luma.</div>}
             </div>
-
-            {/* Goals section */}
             <div style={{ marginBottom:"28px" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
                 <div className="pill-label">{currentCat.label} Goals ({currentGoals.length})</div>
                 <button onClick={()=>{setNewGoal({title:"",category:growthTab,description:"",targetDate:"",progress:0});setEditingGoal(null);setShowAddGoal(true);}} style={{ padding:"8px 16px", background:`linear-gradient(135deg,${currentCat.color},${currentCat.color}cc)`, border:"none", borderRadius:"12px", color:"#fff", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>+ Add Goal</button>
               </div>
-              {currentGoals.length===0 ? (
-                <div style={{ textAlign:"center", padding:"32px 0", color:"rgba(26,26,26,0.22)", background:"rgba(255,255,255,0.5)", borderRadius:"18px", border:"0.5px solid rgba(26,26,26,0.06)" }}>
-                  <div style={{ fontSize:"16px", fontWeight:700, marginBottom:"6px" }}>No {currentCat.label.toLowerCase()} goals yet</div>
-                  <div style={{ fontSize:"14px" }}>Add your first goal to start tracking your progress.</div>
-                </div>
-              ) : currentGoals.map(goal=>(
+              {currentGoals.length===0?<div style={{ textAlign:"center", padding:"32px 0", color:"rgba(26,26,26,0.22)", background:"rgba(255,255,255,0.5)", borderRadius:"18px", border:"0.5px solid rgba(26,26,26,0.06)" }}><div style={{ fontSize:"16px", fontWeight:700, marginBottom:"6px" }}>No {currentCat.label.toLowerCase()} goals yet</div><div style={{ fontSize:"14px" }}>Add your first goal to start tracking.</div></div>:currentGoals.map(goal=>(
                 <div key={goal.id} className="goal-row" style={{ background:"rgba(255,255,255,0.75)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"18px", padding:"18px 20px", marginBottom:"10px", backdropFilter:"blur(20px)" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"10px" }}>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontSize:"16px", fontWeight:800, color:"#1a1a1a", marginBottom:"4px" }}>{goal.title}</div>
-                      {goal.description&&<div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.45)", lineHeight:1.5, marginBottom:"4px" }}>{goal.description}</div>}
-                      {goal.targetDate&&<div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>Target: {goal.targetDate}</div>}
-                    </div>
+                    <div style={{ flex:1 }}><div style={{ fontSize:"16px", fontWeight:800, color:"#1a1a1a", marginBottom:"4px" }}>{goal.title}</div>{goal.description&&<div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.45)", lineHeight:1.5, marginBottom:"4px" }}>{goal.description}</div>}{goal.targetDate&&<div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>Target: {goal.targetDate}</div>}</div>
                     <div style={{ display:"flex", gap:"4px", marginLeft:"12px" }}>
                       <button onClick={()=>{setNewGoal({title:goal.title,category:goal.category||growthTab,description:goal.description||"",targetDate:goal.targetDate||"",progress:goal.progress||0});setEditingGoal(goal);setShowAddGoal(true);}} style={{ background:"none", border:"none", color:"rgba(26,26,26,0.3)", cursor:"pointer", fontSize:"13px", fontWeight:700, padding:"4px 6px", fontFamily:"'Nunito',sans-serif" }}>Edit</button>
                       <button className="goal-del" onClick={()=>deleteGoal(growthTab,goal.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"18px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
                     </div>
                   </div>
-                  <div style={{ display:"flex", alignItems:"center", gap:"12px" }}>
-                    <div style={{ flex:1 }}>
-                      <div className="progress-bar-bg">
-                        <div className="progress-bar-fill" style={{ width:`${goal.progress||0}%`, background:`linear-gradient(90deg,${currentCat.color},${currentCat.color}99)` }} />
-                      </div>
-                    </div>
-                    <div style={{ fontSize:"13px", fontWeight:800, color:currentCat.color, minWidth:"36px", textAlign:"right" }}>{goal.progress||0}%</div>
-                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:"12px" }}><div style={{ flex:1 }}><div style={{ height:"6px", background:"rgba(26,26,26,0.08)", borderRadius:"100px", overflow:"hidden" }}><div style={{ height:"100%", width:`${goal.progress||0}%`, background:`linear-gradient(90deg,${currentCat.color},${currentCat.color}99)`, borderRadius:"100px", transition:"width 0.5s ease" }}/></div></div><div style={{ fontSize:"13px", fontWeight:800, color:currentCat.color, minWidth:"36px", textAlign:"right" }}>{goal.progress||0}%</div></div>
                   <input type="range" min="0" max="100" value={goal.progress||0} onChange={e=>updateGoalProgress(growthTab,goal.id,parseInt(e.target.value))} style={{ width:"100%", marginTop:"8px", background:`linear-gradient(to right, ${currentCat.color} ${goal.progress||0}%, rgba(26,26,26,0.1) ${goal.progress||0}%)` }} />
                 </div>
               ))}
             </div>
-
-            {/* Wins Journal */}
             <div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
                 <div className="pill-label">{currentCat.label} Wins ({currentWins.length})</div>
                 <button onClick={()=>{setNewWin({text:"",category:growthTab,date:""});setShowAddWin(true);}} style={{ padding:"8px 16px", background:"rgba(0,200,150,0.1)", border:"0.5px solid rgba(0,200,150,0.2)", borderRadius:"12px", color:"#00a87c", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>+ Log Win</button>
               </div>
-              {currentWins.length===0 ? (
-                <div style={{ textAlign:"center", padding:"32px 0", color:"rgba(26,26,26,0.22)", background:"rgba(255,255,255,0.5)", borderRadius:"18px", border:"0.5px solid rgba(26,26,26,0.06)" }}>
-                  <div style={{ fontSize:"16px", fontWeight:700, marginBottom:"6px" }}>No wins logged yet</div>
-                  <div style={{ fontSize:"14px" }}>Every step counts. Log your first win — however small.</div>
-                </div>
-              ) : currentWins.map(win=>(
+              {currentWins.length===0?<div style={{ textAlign:"center", padding:"32px 0", color:"rgba(26,26,26,0.22)", background:"rgba(255,255,255,0.5)", borderRadius:"18px", border:"0.5px solid rgba(26,26,26,0.06)" }}><div style={{ fontSize:"16px", fontWeight:700, marginBottom:"6px" }}>No wins logged yet</div><div style={{ fontSize:"14px" }}>Every step counts. Log your first win.</div></div>:currentWins.map(win=>(
                 <div key={win.id} className="win-row" style={{ display:"flex", alignItems:"flex-start", gap:"12px", background:"rgba(0,200,150,0.05)", border:"0.5px solid rgba(0,200,150,0.12)", borderRadius:"16px", padding:"14px 18px", marginBottom:"8px" }}>
                   <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:"#00c896", flexShrink:0, marginTop:"6px" }} />
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:"15px", fontWeight:600, color:"rgba(26,26,26,0.78)", lineHeight:1.5 }}>{win.text}</div>
-                    <div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)", marginTop:"4px" }}>{win.date}</div>
-                  </div>
+                  <div style={{ flex:1 }}><div style={{ fontSize:"15px", fontWeight:600, color:"rgba(26,26,26,0.78)", lineHeight:1.5 }}>{win.text}</div><div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)", marginTop:"4px" }}>{win.date}</div></div>
                   <button className="win-del" onClick={()=>deleteWin(win.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"18px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
                 </div>
               ))}
-
-              {/* Ask Luma to reflect on wins */}
-              {currentWins.length > 0 && (
-                <button onClick={()=>sendMessage(`I want to reflect on my ${currentCat.label.toLowerCase()} wins and see how far I've come. Here are my recent wins: ${currentWins.slice(0,5).map(w=>w.text).join(", ")}. Please celebrate these with me and help me see my progress.`)} style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"13px 20px", background:"rgba(255,255,255,0.6)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"16px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", marginTop:"12px", width:"100%", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }}
-                  onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.92)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}}
-                  onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.6)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>
-                  Ask Luma to celebrate my progress with me
-                </button>
-              )}
+              {currentWins.length>0&&<button onClick={()=>sendMessage(`I want to reflect on my ${currentCat.label.toLowerCase()} wins and see how far I've come. Here are my recent wins: ${currentWins.slice(0,5).map(w=>w.text).join(", ")}. Please celebrate these with me and help me see my progress.`)} style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"13px 20px", background:"rgba(255,255,255,0.6)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"16px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", marginTop:"12px", width:"100%", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }} onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.92)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.6)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>Ask Luma to celebrate my progress with me</button>}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* EMAIL DRAFTING */}
+      {screen==="email"&&(
+        <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
+          <div style={{ maxWidth:"720px", margin:"0 auto" }}>
+            <div style={{ marginBottom:"24px" }}>
+              <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"8px" }}>Email & Messages</h2>
+              <p style={{ fontSize:"17px", color:"rgba(26,26,26,0.36)", fontWeight:500 }}>Draft anything — emails, texts, messages — in seconds.</p>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display:"flex", gap:"4px", marginBottom:"28px", background:"rgba(255,255,255,0.5)", borderRadius:"14px", padding:"4px", border:"0.5px solid rgba(26,26,26,0.07)", width:"fit-content" }}>
+              <button className={`tab-btn ${emailTab==="compose"?"active":""}`} onClick={()=>setEmailTab("compose")}>Compose</button>
+              <button className={`tab-btn ${emailTab==="drafts"?"active":""}`} onClick={()=>setEmailTab("drafts")}>
+                Saved Drafts {emailDrafts.length>0&&`(${emailDrafts.length})`}
+              </button>
+            </div>
+
+            {emailTab==="compose"&&(
+              <div>
+                {/* Step 1 - Type */}
+                <div style={{ marginBottom:"20px" }}>
+                  <div className="pill-label" style={{ marginBottom:"12px" }}>Step 1 — What are you writing?</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:"8px" }}>
+                    {EMAIL_TYPES.map(type=>(
+                      <button key={type.key} className={`email-type-btn ${emailType===type.key?"active":""}`} onClick={()=>setEmailType(type.key)}>
+                        <span style={{ fontSize:"16px" }}>{type.icon}</span>
+                        <span>{type.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Step 2 - Context */}
+                <div style={{ marginBottom:"20px" }}>
+                  <div className="pill-label" style={{ marginBottom:"12px" }}>Step 2 — Give Luma the context</div>
+                  <textarea value={emailContext} onChange={e=>setEmailContext(e.target.value)} placeholder={`Tell Luma what you need to say. For example:\n\n"I need to follow up with my manager about the promotion conversation we had last week. I want to express my continued interest and ask about the timeline. Keep it professional but warm."\n\nThe more detail you give, the better the draft.`} rows={6} style={{ width:"100%", background:"rgba(255,255,255,0.75)", border:"0.5px solid rgba(26,26,26,0.09)", borderRadius:"18px", padding:"18px 20px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:500, resize:"vertical", lineHeight:1.65, minHeight:"140px" }} />
+                </div>
+
+                {/* Generate button */}
+                <button onClick={generateEmail} disabled={!emailType||!emailContext.trim()||emailLoading} style={{ width:"100%", padding:"16px", background:emailType&&emailContext.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"18px", color:emailType&&emailContext.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:emailType&&emailContext.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif", marginBottom:"28px", display:"flex", alignItems:"center", justifyContent:"center", gap:"10px", transition:"all 0.2s" }}>
+                  {emailLoading?<><div style={{ width:"16px", height:"16px", border:"2.5px solid rgba(255,255,255,0.3)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>Drafting your message…</>:"Draft with Luma"}
+                </button>
+
+                {/* Results */}
+                {emailResult&&(
+                  <div style={{ animation:"fadeUp 0.4s ease" }}>
+                    <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"16px", padding:"14px 18px", marginBottom:"20px" }}>
+                      <div style={{ fontSize:"14px", fontWeight:700, color:"#00a87c" }}>Luma drafted 2 versions — pick the one that feels right, or mix and match.</div>
+                    </div>
+
+                    {/* Concise version */}
+                    <div style={{ background:"rgba(255,255,255,0.82)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"22px", padding:"24px", marginBottom:"14px", backdropFilter:"blur(20px)" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
+                        <div>
+                          <div style={{ fontSize:"14px", fontWeight:800, color:"#1a1a1a" }}>Concise Version</div>
+                          <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Short, direct, gets to the point</div>
+                        </div>
+                        <button className={`copy-btn ${copiedVersion==="concise"?"copied":""}`} onClick={()=>copyToClipboard(emailResult.concise,"concise")}>
+                          {copiedVersion==="concise"?"✓ Copied!":"Copy"}
+                        </button>
+                      </div>
+                      <div style={{ fontSize:"14px", color:"rgba(26,26,26,0.75)", lineHeight:1.7, whiteSpace:"pre-wrap", fontWeight:500 }}>{emailResult.concise}</div>
+                    </div>
+
+                    {/* Detailed version */}
+                    {emailResult.detailed&&(
+                      <div style={{ background:"rgba(255,255,255,0.82)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"22px", padding:"24px", marginBottom:"20px", backdropFilter:"blur(20px)" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
+                          <div>
+                            <div style={{ fontSize:"14px", fontWeight:800, color:"#1a1a1a" }}>Detailed Version</div>
+                            <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>More context, warmer tone</div>
+                          </div>
+                          <button className={`copy-btn ${copiedVersion==="detailed"?"copied":""}`} onClick={()=>copyToClipboard(emailResult.detailed,"detailed")}>
+                            {copiedVersion==="detailed"?"✓ Copied!":"Copy"}
+                          </button>
+                        </div>
+                        <div style={{ fontSize:"14px", color:"rgba(26,26,26,0.75)", lineHeight:1.7, whiteSpace:"pre-wrap", fontWeight:500 }}>{emailResult.detailed}</div>
+                      </div>
+                    )}
+
+                    <div style={{ display:"flex", gap:"10px" }}>
+                      <button onClick={saveDraft} style={{ padding:"12px 22px", background:savedDraft?"rgba(0,200,150,0.1)":"rgba(255,255,255,0.75)", border:`0.5px solid ${savedDraft?"rgba(0,200,150,0.25)":"rgba(26,26,26,0.1)"}`, borderRadius:"14px", color:savedDraft?"#00a87c":"rgba(26,26,26,0.5)", fontSize:"14px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }}>
+                        {savedDraft?"✓ Saved":"Save Draft"}
+                      </button>
+                      <button onClick={()=>{setEmailResult(null);setEmailContext("");setEmailType("");}} style={{ padding:"12px 22px", background:"rgba(26,26,26,0.04)", border:"none", borderRadius:"14px", color:"rgba(26,26,26,0.4)", fontSize:"14px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Start Over</button>
+                      <button onClick={()=>sendMessage(`Help me refine this draft further. Here's the context: ${emailContext}\n\nHere's the current draft:\n${emailResult.concise}\n\nWhat would make this better?`)} style={{ padding:"12px 22px", background:"rgba(14,165,233,0.08)", border:"0.5px solid rgba(14,165,233,0.2)", borderRadius:"14px", color:"#0ea5e9", fontSize:"14px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Refine with Luma</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {emailTab==="drafts"&&(
+              <div>
+                {emailDrafts.length===0?(
+                  <div style={{ textAlign:"center", padding:"60px 0", color:"rgba(26,26,26,0.22)" }}>
+                    <div style={{ fontSize:"18px", fontWeight:800, marginBottom:"10px" }}>No saved drafts yet</div>
+                    <div style={{ fontSize:"15px" }}>Compose an email and save it to access it here.</div>
+                  </div>
+                ) : emailDrafts.map(draft=>(
+                  <div key={draft.id} style={{ background:"rgba(255,255,255,0.75)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"20px", padding:"20px 22px", marginBottom:"12px", backdropFilter:"blur(20px)" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"10px" }}>
+                      <div>
+                        <div style={{ fontSize:"14px", fontWeight:800, color:"#1a1a1a", marginBottom:"3px" }}>{EMAIL_TYPES.find(t=>t.key===draft.type)?.label || draft.type}</div>
+                        <div style={{ fontSize:"12px", fontWeight:700, color:"rgba(26,26,26,0.3)" }}>{draft.date}</div>
+                      </div>
+                      <button onClick={()=>setEmailDrafts(prev=>prev.filter(d=>d.id!==draft.id))} style={{ background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"18px", lineHeight:1 }}>×</button>
+                    </div>
+                    <div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.5)", lineHeight:1.5, marginBottom:"12px" }}>{draft.context.slice(0,120)}…</div>
+                    <div style={{ fontSize:"13px", color:"rgba(26,26,26,0.65)", lineHeight:1.6, whiteSpace:"pre-wrap", background:"rgba(245,242,238,0.8)", borderRadius:"12px", padding:"12px 14px", marginBottom:"12px" }}>{draft.concise.slice(0,300)}{draft.concise.length>300?"…":""}</div>
+                    <div style={{ display:"flex", gap:"8px" }}>
+                      <button className="copy-btn" onClick={()=>copyToClipboard(draft.concise,`draft-concise-${draft.id}`)}>
+                        {copiedVersion===`draft-concise-${draft.id}`?"✓ Copied!":"Copy Concise"}
+                      </button>
+                      {draft.detailed&&<button className="copy-btn" onClick={()=>copyToClipboard(draft.detailed,`draft-detailed-${draft.id}`)}>
+                        {copiedVersion===`draft-detailed-${draft.id}`?"✓ Copied!":"Copy Detailed"}
+                      </button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1013,79 +1202,97 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
       {screen==="profile"&&(
         <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
           <div style={{ maxWidth:"720px", margin:"0 auto" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"36px", animation:"fadeUp 0.5s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"36px" }}>
               <div>
                 <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"8px" }}>Profile</h2>
                 <p style={{ fontSize:"17px", color:"rgba(26,26,26,0.36)", fontWeight:500 }}>Help Luma know you better.</p>
               </div>
               <button onClick={()=>editingProfile?saveProfile():setEditingProfile(true)} style={{ padding:"12px 24px", background:editingProfile?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(255,255,255,0.75)", border:`0.5px solid ${editingProfile?"transparent":"rgba(26,26,26,0.1)"}`, borderRadius:"18px", color:editingProfile?"#fff":"#1a1a1a", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{editingProfile?"Save":"Edit"}</button>
             </div>
+
             {conversations.length>0&&(
               <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"20px", padding:"18px 22px", marginBottom:"16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                 <div><div style={{ fontSize:"13px", fontWeight:800, color:"#00a87c", marginBottom:"4px" }}>Luma remembers you</div><div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.5)" }}>{conversations.length} past conversation{conversations.length!==1?"s":""} saved locally</div></div>
                 <button onClick={()=>setShowMemory(true)} style={{ padding:"8px 16px", background:"rgba(0,200,150,0.12)", border:"0.5px solid rgba(0,200,150,0.2)", borderRadius:"12px", color:"#00a87c", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>View</button>
               </div>
             )}
+
             {[
               { key:"name", label:"Your Name", placeholder:"e.g. Deandre" },
               { key:"career", label:"Career and Role", placeholder:"e.g. QA Engineer, bioengineering background" },
               { key:"interests", label:"Hobbies and Interests", placeholder:"e.g. music production, photography, cooking" },
               { key:"goals", label:"What you need most from Luma", placeholder:"e.g. staying organized, managing anxiety" },
               { key:"hardDay", label:"What a hard day looks like", placeholder:"e.g. I can't get started, I feel frozen" },
+              { key:"communicationStyle", label:"Preferred Communication Style", placeholder:"e.g. short and direct, warm and detailed, bullet points…" },
               { key:"location", label:"Location", placeholder:"e.g. San Jose, CA" }
             ].map((field,i)=>(
-              <div key={field.key} className="card" style={{ borderRadius:"22px", padding:"22px 24px", marginBottom:"10px", animation:`fadeUp 0.5s ease ${i*0.06+0.1}s both` }}>
+              <div key={field.key} className="card" style={{ borderRadius:"22px", padding:"22px 24px", marginBottom:"10px" }}>
                 <div className="pill-label" style={{ marginBottom:"12px" }}>{field.label}</div>
                 {editingProfile?<input value={profileDraft[field.key]||""} onChange={e=>setProfileDraft(p=>({...p,[field.key]:e.target.value}))} placeholder={field.placeholder} style={{ width:"100%", background:"rgba(245,242,238,0.8)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"14px", padding:"12px 16px", color:"#1a1a1a", fontSize:"16px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }}/>:<div style={{ fontSize:"17px", fontWeight:600, color:profile[field.key]?"#1a1a1a":"rgba(26,26,26,0.22)" }}>{profile[field.key]||`Add your ${field.label.toLowerCase()}…`}</div>}
               </div>
             ))}
+
+            {/* Conditions — multi-select */}
             <div className="card" style={{ borderRadius:"22px", padding:"22px 24px", marginBottom:"10px" }}>
-              <div className="pill-label" style={{ marginBottom:"12px" }}>Condition or Challenge</div>
-              {editingProfile?(
-                <select value={profileDraft.condition||"none"} onChange={e=>setProfileDraft(p=>({...p,condition:e.target.value}))} style={{ width:"100%", background:"rgba(245,242,238,0.8)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"14px", padding:"12px 16px", color:"#1a1a1a", fontSize:"16px", fontFamily:"'Nunito',sans-serif", fontWeight:600, appearance:"none" }}>
-                  <option value="none">None or prefer not to say</option>
-                  <option value="adhd">ADHD</option>
-                  <option value="anxiety">Anxiety</option>
-                  <option value="depression">Depression</option>
-                  <option value="autism">Autism / Asperger's</option>
-                  <option value="executive_dysfunction">Executive Dysfunction</option>
-                  <option value="ptsd">PTSD</option>
-                  <option value="general">Something else</option>
-                </select>
-              ):<div style={{ fontSize:"17px", fontWeight:600, color:profile.condition&&profile.condition!=="none"?conditionColors[profile.condition]:"rgba(26,26,26,0.22)" }}>{profile.condition&&profile.condition!=="none"?conditionLabels[profile.condition]:"Not set — always optional"}</div>}
-              <div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.3)", marginTop:"10px", lineHeight:1.5 }}>Helps Luma adapt its communication style. 100% private — never leaves your device.</div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"12px" }}>
+                <div className="pill-label">Conditions & Challenges</div>
+                {editingProfile&&<button onClick={()=>setShowConditionPicker(s=>!s)} style={{ padding:"6px 14px", background:"rgba(14,165,233,0.08)", border:"0.5px solid rgba(14,165,233,0.2)", borderRadius:"10px", color:"#0ea5e9", fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{showConditionPicker?"Done":"Edit"}</button>}
+              </div>
+
+              {profileConditions.length === 0 && !editingProfile ? (
+                <div style={{ fontSize:"17px", fontWeight:600, color:"rgba(26,26,26,0.22)" }}>Not set — always optional</div>
+              ) : (
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"6px", marginBottom: showConditionPicker&&editingProfile?"16px":"0" }}>
+                  {profileConditions.map(c => { const cond = ALL_CONDITIONS.find(ac => ac.key===c); return cond ? <span key={c} style={{ padding:"5px 12px", borderRadius:"100px", background:"rgba(14,165,233,0.1)", border:"0.5px solid rgba(14,165,233,0.2)", color:"#0ea5e9", fontSize:"13px", fontWeight:700 }}>{cond.label}</span> : null; })}
+                  {profile.customConditions&&<span style={{ padding:"5px 12px", borderRadius:"100px", background:"rgba(139,92,246,0.08)", border:"0.5px solid rgba(139,92,246,0.2)", color:"#8b5cf6", fontSize:"13px", fontWeight:600 }}>{profile.customConditions.slice(0,40)}{profile.customConditions.length>40?"…":""}</span>}
+                </div>
+              )}
+
+              {editingProfile&&showConditionPicker&&(
+                <ConditionPicker
+                  selected={Array.isArray(profileDraft.conditions)?profileDraft.conditions:[]}
+                  onToggle={(key)=>setProfileDraft(p=>({ ...p, conditions:Array.isArray(p.conditions)?(p.conditions.includes(key)?p.conditions.filter(c=>c!==key):[...p.conditions,key]):[key] }))}
+                  customValue={profileDraft.customConditions||""}
+                  onCustomChange={(v)=>setProfileDraft(p=>({...p,customConditions:v}))}
+                />
+              )}
+
+              <div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.3)", marginTop:"12px", lineHeight:1.5 }}>
+                Select as many as apply. Luma adapts its communication style to all of them simultaneously. 100% private — never leaves your device.
+              </div>
             </div>
+
             <div className="card" style={{ borderRadius:"22px", padding:"24px", marginBottom:"10px" }}>
               <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)", marginBottom:"10px" }}>Luma knows you</div>
               <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.65, marginBottom:"20px" }}>The more you share, the more Luma adapts to your pace, your style, and exactly what you need.</div>
               <button onClick={()=>sendMessage("Based on my profile and our past conversations, what are the most helpful things you can do for me right now? Be specific and gentle.")} style={{ padding:"13px 22px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Ask Luma for personalized advice</button>
             </div>
+
+            {/* Notifications */}
             <div className="card" style={{ borderRadius:"22px", padding:"24px", marginBottom:"10px" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"6px" }}>
                 <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)" }}>Notifications</div>
                 <button onClick={async()=>{ if(notifPermission!=="granted"){const p=await Notification.requestPermission();setNotifPermission(p);} setShowNotifSettings(s=>!s); }} style={{ padding:"8px 16px", background:"rgba(26,26,26,0.05)", border:"0.5px solid rgba(26,26,26,0.09)", borderRadius:"12px", color:"rgba(26,26,26,0.5)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{showNotifSettings?"Done":"Configure"}</button>
               </div>
-              <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.6, marginBottom:showNotifSettings?"20px":"0" }}>{notifPermission==="granted"?"Notifications are enabled.":notifPermission==="denied"?"Notifications are blocked — enable them in your browser settings.":"Enable notifications to get reminders and check-ins from Luma."}</div>
+              <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.6, marginBottom:showNotifSettings?"20px":"0" }}>{notifPermission==="granted"?"Notifications are enabled.":notifPermission==="denied"?"Blocked — enable in browser settings.":"Enable notifications to get reminders from Luma."}</div>
               {showNotifSettings&&(
                 <div style={{ display:"flex", flexDirection:"column", gap:"16px" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"12px 16px", background:notifPermission==="granted"?"rgba(0,200,150,0.06)":"rgba(255,149,0,0.06)", border:`0.5px solid ${notifPermission==="granted"?"rgba(0,200,150,0.15)":"rgba(255,149,0,0.15)"}`, borderRadius:"14px" }}>
                     <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:notifPermission==="granted"?"#00c896":"#ff9500", flexShrink:0 }} />
-                    <span style={{ fontSize:"14px", fontWeight:700, color:notifPermission==="granted"?"#00a87c":"#cc7a00" }}>{notifPermission==="granted"?"Permission granted — notifications active":notifPermission==="denied"?"Permission denied — check browser settings":"Permission not yet requested"}</span>
+                    <span style={{ fontSize:"14px", fontWeight:700, color:notifPermission==="granted"?"#00a87c":"#cc7a00" }}>{notifPermission==="granted"?"Notifications active":"Not yet enabled"}</span>
                     {notifPermission!=="granted"&&notifPermission!=="denied"&&<button onClick={async()=>{const p=await Notification.requestPermission();setNotifPermission(p);}} style={{ marginLeft:"auto", padding:"6px 12px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"8px", color:"#fff", fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Enable</button>}
                   </div>
                   {[
-                    { key:"briefing", title:"Morning Briefing", desc:"Daily reminder to open Luma and start your day", hasTime:true, timeKey:"briefingTime", defaultTime:"08:00", onToggle:(e)=>{ setNotifSettings(p=>({...p,briefingEnabled:e})); if(e&&notifSettings.briefingTime)scheduleDailyBriefingNotif(notifSettings.briefingTime,profile.name); } },
+                    { key:"briefing", title:"Morning Briefing", desc:"Daily reminder to open Luma", hasTime:true, timeKey:"briefingTime", defaultTime:"08:00", onEnable:(e,t)=>{ if(e&&t)scheduleDailyBriefingNotif(t,profile.name); } },
                   ].map(item=>(
                     <div key={item.key} style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:notifSettings[`${item.key}Enabled`]&&item.hasTime?"14px":"0" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:notifSettings[`${item.key}Enabled`]?"14px":"0" }}>
                         <div><div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>{item.title}</div><div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>{item.desc}</div></div>
-                        <div className="toggle" style={{ background:notifSettings[`${item.key}Enabled`]?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>item.onToggle(!notifSettings[`${item.key}Enabled`])}>
+                        <div className="toggle" style={{ background:notifSettings[`${item.key}Enabled`]?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>{ const e=!notifSettings[`${item.key}Enabled`]; setNotifSettings(p=>({...p,[`${item.key}Enabled`]:e})); item.onEnable(e,notifSettings[item.timeKey]); }}>
                           <div className="toggle-knob" style={{ left:notifSettings[`${item.key}Enabled`]?"21px":"3px" }} />
                         </div>
                       </div>
-                      {notifSettings[`${item.key}Enabled`]&&item.hasTime&&(
-                        <div><label className="field-label">Notify me at</label><input type="time" value={notifSettings[item.timeKey]||item.defaultTime} onChange={e=>{setNotifSettings(p=>({...p,[item.timeKey]:e.target.value}));if(notifSettings[`${item.key}Enabled`])scheduleDailyBriefingNotif(e.target.value,profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }} /></div>
-                      )}
+                      {notifSettings[`${item.key}Enabled`]&&item.hasTime&&<div><label className="field-label">Notify me at</label><input type="time" value={notifSettings[item.timeKey]||item.defaultTime} onChange={e=>{setNotifSettings(p=>({...p,[item.timeKey]:e.target.value}));if(notifSettings[`${item.key}Enabled`])scheduleDailyBriefingNotif(e.target.value,profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }} /></div>}
                     </div>
                   ))}
                   <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
@@ -1095,24 +1302,23 @@ Be warm, specific, and genuinely helpful. Reference their actual goals and wins 
                         <div className="toggle-knob" style={{ left:notifSettings.checkInEnabled?"21px":"3px" }} />
                       </div>
                     </div>
-                    {notifSettings.checkInEnabled&&(<div><label className="field-label">Check in at</label><select value={notifSettings.checkInHour||"14"} onChange={e=>{setNotifSettings(p=>({...p,checkInHour:e.target.value}));if(notifSettings.checkInEnabled)scheduleCheckIn(parseInt(e.target.value),profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600, appearance:"none", cursor:"pointer" }}>{[{value:"9",label:"9:00 AM"},{value:"11",label:"11:00 AM"},{value:"13",label:"1:00 PM"},{value:"14",label:"2:00 PM"},{value:"16",label:"4:00 PM"},{value:"18",label:"6:00 PM"},{value:"20",label:"8:00 PM"}].map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>)}
+                    {notifSettings.checkInEnabled&&<div><label className="field-label">Check in at</label><select value={notifSettings.checkInHour||"14"} onChange={e=>{setNotifSettings(p=>({...p,checkInHour:e.target.value}));if(notifSettings.checkInEnabled)scheduleCheckIn(parseInt(e.target.value),profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600, appearance:"none", cursor:"pointer" }}>{[{value:"9",label:"9:00 AM"},{value:"11",label:"11:00 AM"},{value:"13",label:"1:00 PM"},{value:"14",label:"2:00 PM"},{value:"16",label:"4:00 PM"},{value:"18",label:"6:00 PM"},{value:"20",label:"8:00 PM"}].map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></div>}
                   </div>
                   <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                      <div><div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Task Reminders</div><div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Notifications for individual task reminder times</div></div>
+                      <div><div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Task Reminders</div><div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Notifications for task reminder times</div></div>
                       <div className="toggle" style={{ background:notifSettings.taskRemindersEnabled!==false?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>setNotifSettings(p=>({...p,taskRemindersEnabled:p.taskRemindersEnabled===false}))}>
                         <div className="toggle-knob" style={{ left:notifSettings.taskRemindersEnabled!==false?"21px":"3px" }} />
                       </div>
                     </div>
                   </div>
-                  <button onClick={()=>{ if(notifPermission==="granted") new Notification("Hey from Luma!",{body:`Just making sure notifications are working${profile.name?`, ${profile.name}`:""}!`,icon:"/favicon.ico",tag:"luma-test"}); }} style={{ padding:"12px", background:"rgba(26,26,26,0.04)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"14px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", width:"100%", transition:"all 0.2s" }}
-                    onMouseEnter={e=>{e.currentTarget.style.background="rgba(26,26,26,0.08)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}}
-                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(26,26,26,0.04)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>Send a test notification</button>
+                  <button onClick={()=>{ if(notifPermission==="granted") new Notification("Hey from Luma!",{body:`Just making sure notifications are working${profile.name?`, ${profile.name}`:""}!`,icon:"/favicon.ico",tag:"luma-test"}); }} style={{ padding:"12px", background:"rgba(26,26,26,0.04)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"14px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", width:"100%", transition:"all 0.2s" }} onMouseEnter={e=>{e.currentTarget.style.background="rgba(26,26,26,0.08)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(26,26,26,0.04)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>Send a test notification</button>
                 </div>
               )}
             </div>
+
             <div style={{ textAlign:"center", marginTop:"24px", paddingBottom:"8px" }}>
-              <button onClick={()=>{setShowOnboarding(true);setOnboardingStep(0);setOnboardingInput("");setOnboardingData({});}} style={{ fontSize:"13px", fontWeight:700, color:"rgba(26,26,26,0.22)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Redo onboarding</button>
+              <button onClick={()=>{setShowOnboarding(true);setOnboardingStep(0);setOnboardingInput("");setOnboardingData({});setOnboardingConditions([]);setOnboardingCustomConditions("");}} style={{ fontSize:"13px", fontWeight:700, color:"rgba(26,26,26,0.22)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Redo onboarding</button>
             </div>
           </div>
         </div>
