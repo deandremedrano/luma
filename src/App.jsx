@@ -180,9 +180,43 @@ function scheduleReminder(task) {
   }
 }
 
+function scheduleDailyBriefingNotif(time, name) {
+  if (!time || !("Notification" in window) || Notification.permission !== "granted") return;
+  const [hours, minutes] = time.split(":").map(Number);
+  const now = new Date();
+  const next = new Date();
+  next.setHours(hours, minutes, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  const delay = next.getTime() - now.getTime();
+  setTimeout(() => {
+    new Notification("Good morning from Luma", {
+      body: `Hey${name ? ` ${name}` : ""}! Your morning briefing is ready. Open Luma to start your day.`,
+      icon: "/favicon.ico",
+      tag: "luma-morning-briefing"
+    });
+    scheduleDailyBriefingNotif(time, name);
+  }, delay);
+}
+
+function scheduleCheckIn(hour, name) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const now = new Date();
+  const next = new Date();
+  next.setHours(hour, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  const delay = next.getTime() - now.getTime();
+  setTimeout(() => {
+    new Notification("Luma is thinking of you", {
+      body: `Hey${name ? ` ${name}` : ""}. Just checking in — how are you doing today?`,
+      icon: "/favicon.ico",
+      tag: "luma-checkin"
+    });
+    scheduleCheckIn(hour, name);
+  }, delay);
+}
+
 export default function App() {
   const [screen, setScreen] = useState("home");
-  const [taskScreen, setTaskScreen] = useState("list");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -210,12 +244,16 @@ export default function App() {
   const [newTask, setNewTask] = useState({ text:"", priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"" });
   const [suggestingTasks, setSuggestingTasks] = useState(false);
   const [suggestedTasks, setSuggestedTasks] = useState([]);
+  const [notifSettings, setNotifSettings] = useState(() => { try { return JSON.parse(localStorage.getItem("luma_notif_settings")||"{}"); } catch { return {}; } });
+  const [notifPermission, setNotifPermission] = useState(() => "Notification" in window ? Notification.permission : "unsupported");
+  const [showNotifSettings, setShowNotifSettings] = useState(false);
   const bottomRef = useRef(null);
   const recognitionRef = useRef(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, loading]);
   useEffect(() => { localStorage.setItem("luma_profile", JSON.stringify(profile)); }, [profile]);
   useEffect(() => { localStorage.setItem("luma_tasks", JSON.stringify(tasks)); }, [tasks]);
+  useEffect(() => { localStorage.setItem("luma_notif_settings", JSON.stringify(notifSettings)); }, [notifSettings]);
   useEffect(() => { fetch("http://localhost:11434/api/tags").then(() => setOllamaStatus("online")).catch(() => setOllamaStatus("offline")); }, []);
 
   useEffect(() => {
@@ -228,29 +266,29 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", handleUnload);
   }, [messages, profile]);
 
-  // Schedule all reminders on load
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+      Notification.requestPermission().then(p => setNotifPermission(p));
     }
     tasks.filter(t => !t.done && t.reminderTime).forEach(scheduleReminder);
+    const settings = JSON.parse(localStorage.getItem("luma_notif_settings") || "{}");
+    if (settings.briefingEnabled && settings.briefingTime) scheduleDailyBriefingNotif(settings.briefingTime, profile.name);
+    if (settings.checkInEnabled && settings.checkInHour) scheduleCheckIn(parseInt(settings.checkInHour), profile.name);
   }, []);
 
-  // Check for overdue tasks every minute
   useEffect(() => {
     const interval = setInterval(() => {
       const now = new Date();
-      tasks.forEach(task => {
-        if (!task.done && task.dueDate) {
+      setTasks(prev => prev.map(task => {
+        if (!task.done && task.dueDate && !task.overdue) {
           const due = new Date(`${task.dueDate}T${task.dueTime || "23:59"}`);
-          if (due < now && !task.overdue) {
-            setTasks(prev => prev.map(t => t.id === task.id ? { ...t, overdue:true } : t));
-          }
+          if (due < now) return { ...task, overdue:true };
         }
-      });
+        return task;
+      }));
     }, 60000);
     return () => clearInterval(interval);
-  }, [tasks]);
+  }, []);
 
   const generateBriefing = async () => {
     setBriefingLoading(true);
@@ -297,8 +335,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
   };
 
   const addSuggestedTask = (text) => {
-    const task = { id:Date.now(), text, priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"", done:false, created:new Date().toLocaleDateString(), overdue:false };
-    setTasks(prev => [...prev, task]);
+    setTasks(prev => [...prev, { id:Date.now(), text, priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"", done:false, created:new Date().toLocaleDateString(), overdue:false }]);
     setSuggestedTasks(prev => prev.filter(t => t !== text));
   };
 
@@ -370,10 +407,10 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
 
   const saveTask = () => {
     if (!newTask.text.trim()) return;
-    const task = { ...newTask, id: editingTask ? editingTask.id : Date.now(), done: editingTask ? editingTask.done : false, created: editingTask ? editingTask.created : new Date().toLocaleDateString(), overdue:false };
-    if (editingTask) { setTasks(prev => prev.map(t => t.id===editingTask.id ? task : t)); }
+    const task = { ...newTask, id:editingTask?editingTask.id:Date.now(), done:editingTask?editingTask.done:false, created:editingTask?editingTask.created:new Date().toLocaleDateString(), overdue:false };
+    if (editingTask) { setTasks(prev => prev.map(t => t.id===editingTask.id?task:t)); }
     else { setTasks(prev => [...prev, task]); }
-    if (task.reminderTime) scheduleReminder(task);
+    if (task.reminderTime && notifSettings.taskRemindersEnabled !== false) scheduleReminder(task);
     setNewTask({ text:"", priority:"normal", dueDate:"", dueTime:"", reminderTime:"", recurrence:"none", notes:"" });
     setShowAddTask(false);
     setEditingTask(null);
@@ -389,13 +426,12 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
     setTasks(prev => prev.map(t => {
       if (t.id !== id) return t;
       const done = !t.done;
-      // Handle recurrence
       if (done && t.recurrence && t.recurrence !== "none" && t.dueDate) {
         const due = new Date(t.dueDate);
-        if (t.recurrence === "daily") due.setDate(due.getDate() + 1);
-        else if (t.recurrence === "weekdays") { due.setDate(due.getDate() + 1); while ([0,6].includes(due.getDay())) due.setDate(due.getDate() + 1); }
-        else if (t.recurrence === "weekly") due.setDate(due.getDate() + 7);
-        else if (t.recurrence === "monthly") due.setMonth(due.getMonth() + 1);
+        if (t.recurrence === "daily") due.setDate(due.getDate()+1);
+        else if (t.recurrence === "weekdays") { due.setDate(due.getDate()+1); while([0,6].includes(due.getDay())) due.setDate(due.getDate()+1); }
+        else if (t.recurrence === "weekly") due.setDate(due.getDate()+7);
+        else if (t.recurrence === "monthly") due.setMonth(due.getMonth()+1);
         return { ...t, done:false, dueDate:due.toISOString().split("T")[0], overdue:false };
       }
       return { ...t, done, overdue:false };
@@ -422,32 +458,22 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
   const lastSession = conversations[0];
   const dayInfo = getDayInfo();
   const showBriefingCard = (briefing || briefingLoading) && !briefingDismissed;
+  const urgentCount = tasks.filter(t => !t.done && t.priority==="urgent").length;
+  const todayCount = tasks.filter(t => !t.done && t.dueDate===new Date().toISOString().split("T")[0]).length;
+  const overdueCount = tasks.filter(t => !t.done && t.overdue).length;
 
   const getFilteredTasks = () => {
     let filtered = tasks;
-    if (taskFilter === "today") {
-      const today = new Date().toISOString().split("T")[0];
-      filtered = tasks.filter(t => !t.done && t.dueDate === today);
-    } else if (taskFilter === "urgent") {
-      filtered = tasks.filter(t => !t.done && t.priority === "urgent");
-    } else if (taskFilter === "pending") {
-      filtered = tasks.filter(t => !t.done);
-    } else if (taskFilter === "done") {
-      filtered = tasks.filter(t => t.done);
-    }
+    if (taskFilter==="today") filtered = tasks.filter(t => !t.done && t.dueDate===new Date().toISOString().split("T")[0]);
+    else if (taskFilter==="urgent") filtered = tasks.filter(t => !t.done && t.priority==="urgent");
+    else if (taskFilter==="pending") filtered = tasks.filter(t => !t.done);
+    else if (taskFilter==="done") filtered = tasks.filter(t => t.done);
     return filtered.sort((a,b) => {
-      if (taskSort === "priority") {
-        const order = { urgent:0, high:1, normal:2, low:3 };
-        return (order[a.priority]||2) - (order[b.priority]||2);
-      }
-      if (taskSort === "due") return (a.dueDate||"9999") < (b.dueDate||"9999") ? -1 : 1;
+      if (taskSort==="priority") { const o={urgent:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); }
+      if (taskSort==="due") return (a.dueDate||"9999")<(b.dueDate||"9999")?-1:1;
       return 0;
     });
   };
-
-  const urgentCount = tasks.filter(t => !t.done && t.priority === "urgent").length;
-  const todayCount = tasks.filter(t => !t.done && t.dueDate === new Date().toISOString().split("T")[0]).length;
-  const overdueCount = tasks.filter(t => !t.done && t.overdue).length;
 
   return (
     <div style={{ minHeight:"100vh", background:"#f5f2ee", fontFamily:"'Nunito',-apple-system,sans-serif", color:"#1a1a1a", position:"relative", overflow:"hidden" }}>
@@ -500,7 +526,6 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         .memory-panel{position:fixed;top:64px;right:0;bottom:0;width:320px;background:rgba(245,242,238,0.96);backdrop-filter:blur(40px);border-left:0.5px solid rgba(26,26,26,0.07);z-index:90;overflow-y:auto;padding:24px;animation:slideRight 0.3s ease;}
         .mem-card{background:rgba(255,255,255,0.75);border:0.5px solid rgba(26,26,26,0.07);border-radius:16px;padding:16px;margin-bottom:10px;cursor:pointer;transition:all 0.2s;}
         .mem-card:hover{background:rgba(255,255,255,0.95);transform:translateY(-1px);}
-        .briefing-card{animation:briefingIn 0.5s cubic-bezier(0.34,1.2,0.64,1);}
         .briefing-shimmer{background:linear-gradient(90deg,rgba(26,26,26,0.04) 25%,rgba(26,26,26,0.08) 50%,rgba(26,26,26,0.04) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;}
         .filter-btn{padding:7px 14px;border-radius:100px;border:0.5px solid rgba(26,26,26,0.09);background:rgba(255,255,255,0.6);color:rgba(26,26,26,0.5);font-size:13px;font-weight:700;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;white-space:nowrap;}
         .filter-btn.active{background:linear-gradient(135deg,#00c896,#0ea5e9);color:#fff;border-color:transparent;}
@@ -508,6 +533,8 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
         .field-input{width:100%;background:rgba(245,242,238,0.8);border:0.5px solid rgba(26,26,26,0.1);border-radius:12px;padding:11px 14px;color:#1a1a1a;font-size:15px;font-family:'Nunito',sans-serif;font-weight:600;}
         .field-input:focus{border-color:rgba(14,165,233,0.35);box-shadow:0 0 0 3px rgba(14,165,233,0.08);}
         .priority-btn{padding:8px 14px;border-radius:10px;border:0.5px solid;font-size:13px;font-weight:800;cursor:pointer;font-family:'Nunito',sans-serif;transition:all 0.2s;}
+        .toggle{width:44px;height:26px;border-radius:100px;cursor:pointer;position:relative;transition:all 0.25s;flex-shrink:0;}
+        .toggle-knob{position:absolute;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left 0.25s;box-shadow:0 1px 4px rgba(0,0,0,0.15);}
       `}</style>
 
       {/* Aurora orbs */}
@@ -555,64 +582,41 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
           <div style={{ background:"rgba(255,255,255,0.92)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"32px", padding:"36px", maxWidth:"520px", width:"100%", animation:"slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1)", boxShadow:"0 24px 80px rgba(0,0,0,0.08)", maxHeight:"90vh", overflowY:"auto" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"28px" }}>
               <h2 style={{ fontSize:"22px", fontWeight:900, letterSpacing:"-0.02em" }}>{editingTask?"Edit Task":"New Task"}</h2>
-              <button onClick={()=>{setShowAddTask(false);setEditingTask(null);setNewTask({text:"",priority:"normal",dueDate:"",dueTime:"",reminderTime:"",recurrence:"none",notes:"",});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
+              <button onClick={()=>{setShowAddTask(false);setEditingTask(null);setNewTask({text:"",priority:"normal",dueDate:"",dueTime:"",reminderTime:"",recurrence:"none",notes:""});}} style={{ background:"none", border:"none", fontSize:"20px", color:"rgba(26,26,26,0.3)", cursor:"pointer" }}>×</button>
             </div>
-
-            {/* Task text */}
             <div style={{ marginBottom:"20px" }}>
               <label className="field-label">What needs to be done?</label>
               <textarea value={newTask.text} onChange={e=>setNewTask(p=>({...p,text:e.target.value}))} placeholder="Describe your task — as small as you need it to be…" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} autoFocus />
             </div>
-
-            {/* Priority */}
             <div style={{ marginBottom:"20px" }}>
               <label className="field-label">Priority</label>
               <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
                 {Object.entries(PRIORITY_CONFIG).map(([key,cfg])=>(
-                  <button key={key} className="priority-btn" onClick={()=>setNewTask(p=>({...p,priority:key}))} style={{ background:newTask.priority===key?cfg.bg:"transparent", borderColor:newTask.priority===key?cfg.border:"rgba(26,26,26,0.1)", color:newTask.priority===key?cfg.color:"rgba(26,26,26,0.4)" }}>
-                    {cfg.label}
-                  </button>
+                  <button key={key} className="priority-btn" onClick={()=>setNewTask(p=>({...p,priority:key}))} style={{ background:newTask.priority===key?cfg.bg:"transparent", borderColor:newTask.priority===key?cfg.border:"rgba(26,26,26,0.1)", color:newTask.priority===key?cfg.color:"rgba(26,26,26,0.4)" }}>{cfg.label}</button>
                 ))}
               </div>
             </div>
-
-            {/* Due date and time */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px", marginBottom:"20px" }}>
-              <div>
-                <label className="field-label">Due Date</label>
-                <input type="date" value={newTask.dueDate} onChange={e=>setNewTask(p=>({...p,dueDate:e.target.value}))} className="field-input" />
-              </div>
-              <div>
-                <label className="field-label">Due Time</label>
-                <input type="time" value={newTask.dueTime} onChange={e=>setNewTask(p=>({...p,dueTime:e.target.value}))} className="field-input" />
-              </div>
+              <div><label className="field-label">Due Date</label><input type="date" value={newTask.dueDate} onChange={e=>setNewTask(p=>({...p,dueDate:e.target.value}))} className="field-input" /></div>
+              <div><label className="field-label">Due Time</label><input type="time" value={newTask.dueTime} onChange={e=>setNewTask(p=>({...p,dueTime:e.target.value}))} className="field-input" /></div>
             </div>
-
-            {/* Reminder */}
             <div style={{ marginBottom:"20px" }}>
               <label className="field-label">Reminder Time</label>
               <input type="time" value={newTask.reminderTime} onChange={e=>setNewTask(p=>({...p,reminderTime:e.target.value}))} className="field-input" />
               <div style={{ fontSize:"12px", color:"rgba(26,26,26,0.3)", fontWeight:500, marginTop:"6px" }}>You'll get a browser notification at this time</div>
             </div>
-
-            {/* Recurrence */}
             <div style={{ marginBottom:"20px" }}>
               <label className="field-label">Repeat</label>
               <select value={newTask.recurrence} onChange={e=>setNewTask(p=>({...p,recurrence:e.target.value}))} className="field-input" style={{ appearance:"none", cursor:"pointer" }}>
                 {RECURRENCE_OPTIONS.map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
             </div>
-
-            {/* Notes */}
             <div style={{ marginBottom:"28px" }}>
               <label className="field-label">Notes (optional)</label>
               <textarea value={newTask.notes} onChange={e=>setNewTask(p=>({...p,notes:e.target.value}))} placeholder="Any extra context…" rows={2} className="field-input" style={{ resize:"none", lineHeight:1.5 }} />
             </div>
-
             <div style={{ display:"flex", gap:"10px" }}>
-              <button onClick={saveTask} disabled={!newTask.text.trim()} style={{ flex:1, padding:"14px", background:newTask.text.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newTask.text.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newTask.text.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>
-                {editingTask?"Save Changes":"Add Task"}
-              </button>
+              <button onClick={saveTask} disabled={!newTask.text.trim()} style={{ flex:1, padding:"14px", background:newTask.text.trim()?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.06)", border:"none", borderRadius:"16px", color:newTask.text.trim()?"#fff":"rgba(26,26,26,0.3)", fontSize:"16px", fontWeight:900, cursor:newTask.text.trim()?"pointer":"default", fontFamily:"'Nunito',sans-serif" }}>{editingTask?"Save Changes":"Add Task"}</button>
               <button onClick={()=>{setShowAddTask(false);setEditingTask(null);}} style={{ padding:"14px 20px", background:"rgba(26,26,26,0.05)", border:"none", borderRadius:"16px", color:"rgba(26,26,26,0.4)", fontSize:"15px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Cancel</button>
             </div>
           </div>
@@ -672,9 +676,8 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
       {screen==="home"&&(
         <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
           <div style={{ maxWidth:"720px", margin:"0 auto" }}>
-
             {showBriefingCard&&(
-              <div className="briefing-card" style={{ background:"rgba(255,255,255,0.82)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"28px", padding:"28px 32px", marginBottom:"28px", backdropFilter:"blur(20px)", boxShadow:"0 4px 32px rgba(0,0,0,0.06)" }}>
+              <div style={{ background:"rgba(255,255,255,0.82)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"28px", padding:"28px 32px", marginBottom:"28px", backdropFilter:"blur(20px)", boxShadow:"0 4px 32px rgba(0,0,0,0.06)", animation:"briefingIn 0.5s cubic-bezier(0.34,1.2,0.64,1)" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"16px" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:"10px" }}>
                     <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:"linear-gradient(135deg,#00c896,#0ea5e9)", animation:"pulse 2s infinite" }} />
@@ -699,23 +702,17 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 )}
               </div>
             )}
-
             {!showBriefingCard&&lastSession&&(
               <div style={{ background:"rgba(255,255,255,0.65)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"20px", padding:"16px 20px", marginBottom:"28px", backdropFilter:"blur(20px)", cursor:"pointer", animation:"fadeUp 0.5s ease" }} onClick={()=>loadConversation(lastSession)}>
                 <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.3)", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:"6px" }}>Continue from last time · {lastSession.dateLabel}</div>
                 <div style={{ fontSize:"15px", fontWeight:600, color:"rgba(26,26,26,0.65)", lineHeight:1.5 }}>"{lastSession.messages.filter(m=>m.role==="user")[0]?.content.slice(0,100)}…"</div>
               </div>
             )}
-
             <div style={{ marginBottom:"20px", animation:"fadeUp 0.6s ease" }}>
-              <div className="pill" style={{ marginBottom:"20px" }}>
-                <div className="pill-dot" />
-                {GREETING()}{profile.name?`, ${profile.name}`:""} &nbsp;·&nbsp; {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
-              </div>
+              <div className="pill" style={{ marginBottom:"20px" }}><div className="pill-dot" />{GREETING()}{profile.name?`, ${profile.name}`:""} &nbsp;·&nbsp; {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
               <h1 style={{ fontSize:"clamp(44px,7vw,72px)", fontWeight:900, letterSpacing:"-0.04em", lineHeight:1.05, marginBottom:"20px" }}>Your life.<br /><span className="aurora-text">Illuminated.</span></h1>
               <p style={{ fontSize:"clamp(17px,2vw,20px)", color:"rgba(26,26,26,0.45)", lineHeight:1.65, fontWeight:500, maxWidth:"520px" }}>I'm here for you — your career, your goals, your hard days, and everything in between.</p>
             </div>
-
             <div style={{ animation:"fadeUp 0.6s ease 0.1s both", marginBottom:"36px" }}>
               <div className="input-wrap" style={{ padding:"18px 20px", display:"flex", alignItems:"flex-end", gap:"12px" }}>
                 <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage(input);}}} placeholder={`What can I help you with${profile.name?`, ${profile.name}`:""}?`} rows={1} style={{ flex:1, background:"transparent", border:"none", color:"#1a1a1a", fontSize:"17px", resize:"none", fontFamily:"'Nunito',sans-serif", fontWeight:600, lineHeight:1.6, maxHeight:"160px", overflowY:"auto" }} onInput={e=>{e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,160)+"px";}} />
@@ -728,7 +725,6 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               </div>
               <div style={{ fontSize:"12px", fontWeight:600, color:"rgba(26,26,26,0.18)", marginTop:"10px", paddingLeft:"4px" }}>{isListening?"Listening… tap mic to stop":"Tap mic to speak · Enter to send"}</div>
             </div>
-
             <div style={{ animation:"fadeUp 0.6s ease 0.2s both" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
                 <div className="pill-label">Suggested</div>
@@ -741,14 +737,11 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                   { label:"I need help with something", prompt:"I need your help. Ask me what it is and let's work through it together at my own pace." }
                 ].map(s=>(
                   <button key={s.label} className="suggest-btn" onClick={()=>sendMessage(s.prompt)}>
-                    <span>{s.label}</span>
-                    <span style={{ fontSize:"16px", opacity:0.25 }}>→</span>
+                    <span>{s.label}</span><span style={{ fontSize:"16px", opacity:0.25 }}>→</span>
                   </button>
                 ))}
               </div>
             </div>
-
-            {/* Task summary on home */}
             {tasks.filter(t=>!t.done).length>0&&(
               <div style={{ marginTop:"40px", animation:"fadeUp 0.6s ease 0.3s both" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"14px" }}>
@@ -760,7 +753,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                   <button onClick={()=>setScreen("tasks")} style={{ fontSize:"13px", fontWeight:800, color:"rgba(26,26,26,0.3)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>See all</button>
                 </div>
                 {tasks.filter(t=>!t.done).sort((a,b)=>{const o={urgent:0,high:1,normal:2,low:3};return(o[a.priority]||2)-(o[b.priority]||2);}).slice(0,3).map(task=>{
-                  const p = PRIORITY_CONFIG[task.priority||"normal"];
+                  const p=PRIORITY_CONFIG[task.priority||"normal"];
                   return (
                     <div key={task.id} style={{ display:"flex", alignItems:"center", gap:"12px", padding:"13px 18px", background:"rgba(255,255,255,0.72)", border:`0.5px solid ${task.overdue?"rgba(255,69,58,0.2)":"rgba(26,26,26,0.07)"}`, borderRadius:"16px", marginBottom:"8px", backdropFilter:"blur(20px)" }}>
                       <div onClick={()=>toggleTask(task.id)} style={{ width:"20px", height:"20px", border:`2px solid ${p.color}40`, borderRadius:"7px", cursor:"pointer", flexShrink:0 }} />
@@ -789,12 +782,8 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               )}
               {messages.map((m,i)=>(
                 <div key={i} style={{ marginBottom:"28px", display:"flex", flexDirection:"column", alignItems:m.role==="user"?"flex-end":"flex-start", animation:"fadeUp 0.35s ease" }}>
-                  <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.22)", marginBottom:"8px", padding:m.role==="user"?"0 6px 0 0":"0 0 0 6px", letterSpacing:"0.08em" }}>
-                    {m.role==="user"?(profile.name||"YOU").toUpperCase():"LUMA"}
-                  </div>
-                  <div style={{ maxWidth:"82%", padding:"16px 22px", borderRadius:m.role==="user"?"22px 22px 6px 22px":"6px 22px 22px 22px", background:m.role==="user"?"linear-gradient(135deg,rgba(0,200,150,0.1),rgba(14,165,233,0.1))":"rgba(255,255,255,0.82)", backdropFilter:"blur(20px)", border:m.role==="user"?"0.5px solid rgba(0,200,150,0.18)":"0.5px solid rgba(26,26,26,0.07)", color:"#1a1a1a", fontSize:"17px", lineHeight:1.72, whiteSpace:"pre-wrap", fontWeight:500, boxShadow:m.role!=="user"?"0 2px 16px rgba(0,0,0,0.04)":"none" }}>
-                    {m.content}
-                  </div>
+                  <div style={{ fontSize:"11px", fontWeight:800, color:"rgba(26,26,26,0.22)", marginBottom:"8px", padding:m.role==="user"?"0 6px 0 0":"0 0 0 6px", letterSpacing:"0.08em" }}>{m.role==="user"?(profile.name||"YOU").toUpperCase():"LUMA"}</div>
+                  <div style={{ maxWidth:"82%", padding:"16px 22px", borderRadius:m.role==="user"?"22px 22px 6px 22px":"6px 22px 22px 22px", background:m.role==="user"?"linear-gradient(135deg,rgba(0,200,150,0.1),rgba(14,165,233,0.1))":"rgba(255,255,255,0.82)", backdropFilter:"blur(20px)", border:m.role==="user"?"0.5px solid rgba(0,200,150,0.18)":"0.5px solid rgba(26,26,26,0.07)", color:"#1a1a1a", fontSize:"17px", lineHeight:1.72, whiteSpace:"pre-wrap", fontWeight:500, boxShadow:m.role!=="user"?"0 2px 16px rgba(0,0,0,0.04)":"none" }}>{m.content}</div>
                 </div>
               ))}
               {loading&&(
@@ -835,8 +824,6 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
       {screen==="tasks"&&(
         <div className="section-scroll" style={{ paddingTop:"92px", position:"relative", zIndex:1, minHeight:"100vh" }}>
           <div style={{ maxWidth:"720px", margin:"0 auto" }}>
-
-            {/* Header */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"24px", animation:"fadeUp 0.5s ease" }}>
               <div>
                 <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"6px" }}>Tasks</h2>
@@ -847,12 +834,8 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                   {!urgentCount&&!todayCount&&!overdueCount&&<span style={{ color:"rgba(26,26,26,0.36)" }}>One step at a time.</span>}
                 </div>
               </div>
-              <button onClick={()=>{setNewTask({text:"",priority:"normal",dueDate:"",dueTime:"",reminderTime:"",recurrence:"none",notes:""});setEditingTask(null);setShowAddTask(true);}} style={{ padding:"12px 20px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:900, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
-                + New Task
-              </button>
+              <button onClick={()=>{setNewTask({text:"",priority:"normal",dueDate:"",dueTime:"",reminderTime:"",recurrence:"none",notes:""});setEditingTask(null);setShowAddTask(true);}} style={{ padding:"12px 20px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:900, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>+ New Task</button>
             </div>
-
-            {/* Stats row */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px", marginBottom:"20px" }}>
               {[
                 { label:"Total", value:tasks.length, color:"rgba(26,26,26,0.6)" },
@@ -866,17 +849,9 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 </div>
               ))}
             </div>
-
-            {/* Filters and sort */}
             <div style={{ display:"flex", gap:"8px", marginBottom:"16px", flexWrap:"wrap", alignItems:"center" }}>
               <div style={{ display:"flex", gap:"6px", flexWrap:"wrap" }}>
-                {[
-                  { key:"all", label:"All" },
-                  { key:"pending", label:"Pending" },
-                  { key:"today", label:"Today" },
-                  { key:"urgent", label:"Urgent" },
-                  { key:"done", label:"Done" }
-                ].map(f=>(
+                {[{key:"all",label:"All"},{key:"pending",label:"Pending"},{key:"today",label:"Today"},{key:"urgent",label:"Urgent"},{key:"done",label:"Done"}].map(f=>(
                   <button key={f.key} className={`filter-btn ${taskFilter===f.key?"active":""}`} onClick={()=>setTaskFilter(f.key)}>{f.label}</button>
                 ))}
               </div>
@@ -885,15 +860,11 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 <button className={`filter-btn ${taskSort==="due"?"active":""}`} onClick={()=>setTaskSort("due")}>Due date</button>
               </div>
             </div>
-
-            {/* Luma suggest tasks */}
             <button onClick={suggestTasksFromGoals} disabled={suggestingTasks} style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", padding:"12px 20px", background:"rgba(255,255,255,0.6)", border:"0.5px solid rgba(26,26,26,0.07)", borderRadius:"14px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", marginBottom:"16px", width:"100%", fontFamily:"'Nunito',sans-serif", transition:"all 0.2s" }}
               onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.9)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}}
               onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.6)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>
               {suggestingTasks?<><div style={{ width:"14px", height:"14px", border:"2px solid rgba(26,26,26,0.2)", borderTopColor:"rgba(26,26,26,0.5)", borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>Suggesting tasks…</>:"Ask Luma to suggest tasks based on your goals"}
             </button>
-
-            {/* Suggested tasks */}
             {suggestedTasks.length>0&&(
               <div style={{ background:"rgba(0,200,150,0.05)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"18px", padding:"16px 20px", marginBottom:"20px" }}>
                 <div style={{ fontSize:"12px", fontWeight:800, color:"#00a87c", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:"12px" }}>Luma suggests</div>
@@ -905,28 +876,19 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 ))}
               </div>
             )}
-
-            {/* Task list */}
             {getFilteredTasks().length===0 ? (
               <div style={{ textAlign:"center", padding:"60px 0", color:"rgba(26,26,26,0.2)" }}>
-                <div style={{ fontSize:"18px", fontWeight:800, marginBottom:"8px" }}>
-                  {taskFilter==="done"?"No completed tasks yet":"No tasks here"}
-                </div>
-                <div style={{ fontSize:"15px" }}>
-                  {taskFilter==="today"?"Nothing due today — enjoy your day!":taskFilter==="urgent"?"No urgent tasks — you're doing great!":"Add one above or ask Luma to suggest some."}
-                </div>
+                <div style={{ fontSize:"18px", fontWeight:800, marginBottom:"8px" }}>{taskFilter==="done"?"No completed tasks yet":"No tasks here"}</div>
+                <div style={{ fontSize:"15px" }}>{taskFilter==="today"?"Nothing due today — enjoy your day!":taskFilter==="urgent"?"No urgent tasks — you're doing great!":"Add one above or ask Luma to suggest some."}</div>
               </div>
             ) : getFilteredTasks().map(task=>{
-              const p = PRIORITY_CONFIG[task.priority||"normal"];
-              const isOverdue = !task.done && task.overdue;
+              const p=PRIORITY_CONFIG[task.priority||"normal"];
+              const isOverdue=!task.done&&task.overdue;
               return (
                 <div key={task.id} className="task-row" style={{ background:"rgba(255,255,255,0.72)", border:`0.5px solid ${isOverdue?"rgba(255,69,58,0.2)":task.done?"rgba(26,26,26,0.05)":"rgba(26,26,26,0.07)"}`, borderRadius:"18px", padding:"15px 18px", marginBottom:"8px", backdropFilter:"blur(20px)", display:"flex", alignItems:"flex-start", gap:"12px" }}>
-                  {/* Checkbox */}
                   <div onClick={()=>toggleTask(task.id)} style={{ width:"22px", height:"22px", borderRadius:"7px", border:task.done?"none":`2px solid ${p.color}40`, background:task.done?"linear-gradient(135deg,#00c896,#0ea5e9)":"transparent", cursor:"pointer", flexShrink:0, marginTop:"2px", display:"flex", alignItems:"center", justifyContent:"center" }}>
                     {task.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
-
-                  {/* Content */}
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap", marginBottom:"4px" }}>
                       <span style={{ fontSize:"16px", fontWeight:600, color:task.done?"rgba(26,26,26,0.25)":isOverdue?"#ff453a":"rgba(26,26,26,0.82)", textDecoration:task.done?"line-through":"none" }}>{task.text}</span>
@@ -939,8 +901,6 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                       {task.notes&&<span style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.3)" }}>{task.notes.slice(0,50)}{task.notes.length>50?"…":""}</span>}
                     </div>
                   </div>
-
-                  {/* Actions */}
                   <div style={{ display:"flex", gap:"4px", flexShrink:0 }}>
                     <button className="edit-btn" onClick={()=>startEditTask(task)} style={{ opacity:0, background:"none", border:"none", color:"rgba(26,26,26,0.3)", cursor:"pointer", fontSize:"14px", padding:"4px 6px", transition:"opacity 0.2s", fontFamily:"'Nunito',sans-serif", fontWeight:700 }}>Edit</button>
                     <button className="del-btn" onClick={()=>deleteTask(task.id)} style={{ opacity:0, background:"none", border:"none", color:"#ff453a", cursor:"pointer", fontSize:"20px", transition:"opacity 0.2s", padding:"0 4px", lineHeight:1 }}>×</button>
@@ -961,10 +921,9 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 <h2 style={{ fontSize:"clamp(36px,5vw,52px)", fontWeight:900, letterSpacing:"-0.04em", marginBottom:"8px" }}>Profile</h2>
                 <p style={{ fontSize:"17px", color:"rgba(26,26,26,0.36)", fontWeight:500 }}>Help Luma know you better.</p>
               </div>
-              <button onClick={()=>editingProfile?saveProfile():setEditingProfile(true)} style={{ padding:"12px 24px", background:editingProfile?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(255,255,255,0.75)", border:`0.5px solid ${editingProfile?"transparent":"rgba(26,26,26,0.1)"}`, borderRadius:"18px", color:editingProfile?"#fff":"#1a1a1a", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
-                {editingProfile?"Save":"Edit"}
-              </button>
+              <button onClick={()=>editingProfile?saveProfile():setEditingProfile(true)} style={{ padding:"12px 24px", background:editingProfile?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(255,255,255,0.75)", border:`0.5px solid ${editingProfile?"transparent":"rgba(26,26,26,0.1)"}`, borderRadius:"18px", color:editingProfile?"#fff":"#1a1a1a", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>{editingProfile?"Save":"Edit"}</button>
             </div>
+
             {conversations.length>0&&(
               <div style={{ background:"rgba(0,200,150,0.06)", border:"0.5px solid rgba(0,200,150,0.15)", borderRadius:"20px", padding:"18px 22px", marginBottom:"16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                 <div>
@@ -974,6 +933,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 <button onClick={()=>setShowMemory(true)} style={{ padding:"8px 16px", background:"rgba(0,200,150,0.12)", border:"0.5px solid rgba(0,200,150,0.2)", borderRadius:"12px", color:"#00a87c", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>View</button>
               </div>
             )}
+
             {[
               { key:"name", label:"Your Name", placeholder:"e.g. Deandre" },
               { key:"career", label:"Career and Role", placeholder:"e.g. QA Engineer, bioengineering background" },
@@ -987,6 +947,7 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
                 {editingProfile?<input value={profileDraft[field.key]||""} onChange={e=>setProfileDraft(p=>({...p,[field.key]:e.target.value}))} placeholder={field.placeholder} style={{ width:"100%", background:"rgba(245,242,238,0.8)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"14px", padding:"12px 16px", color:"#1a1a1a", fontSize:"16px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }}/>:<div style={{ fontSize:"17px", fontWeight:600, color:profile[field.key]?"#1a1a1a":"rgba(26,26,26,0.22)" }}>{profile[field.key]||`Add your ${field.label.toLowerCase()}…`}</div>}
               </div>
             ))}
+
             <div className="card" style={{ borderRadius:"22px", padding:"22px 24px", marginBottom:"10px" }}>
               <div className="pill-label" style={{ marginBottom:"12px" }}>Condition or Challenge</div>
               {editingProfile?(
@@ -1003,11 +964,100 @@ Current tasks: ${tasks.filter(t=>!t.done).map(t=>t.text).join(", ") || "none"}` 
               ):<div style={{ fontSize:"17px", fontWeight:600, color:profile.condition&&profile.condition!=="none"?conditionColors[profile.condition]:"rgba(26,26,26,0.22)" }}>{profile.condition&&profile.condition!=="none"?conditionLabels[profile.condition]:"Not set — always optional"}</div>}
               <div style={{ fontSize:"13px", fontWeight:500, color:"rgba(26,26,26,0.3)", marginTop:"10px", lineHeight:1.5 }}>Helps Luma adapt its communication style. 100% private — never leaves your device.</div>
             </div>
-            <div className="card" style={{ borderRadius:"22px", padding:"24px", marginTop:"8px" }}>
+
+            <div className="card" style={{ borderRadius:"22px", padding:"24px", marginBottom:"10px" }}>
               <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)", marginBottom:"10px" }}>Luma knows you</div>
               <div style={{ fontSize:"15px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.65, marginBottom:"20px" }}>The more you share, the more Luma adapts to your pace, your style, and exactly what you need.</div>
               <button onClick={()=>sendMessage("Based on my profile and our past conversations, what are the most helpful things you can do for me right now? Be specific and gentle.")} style={{ padding:"13px 22px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"16px", color:"#fff", fontSize:"15px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Ask Luma for personalized advice</button>
             </div>
+
+            {/* Notifications */}
+            <div className="card" style={{ borderRadius:"22px", padding:"24px", marginBottom:"10px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"6px" }}>
+                <div style={{ fontSize:"17px", fontWeight:800, color:"rgba(26,26,26,0.65)" }}>Notifications</div>
+                <button onClick={async()=>{ if(notifPermission!=="granted"){const p=await Notification.requestPermission();setNotifPermission(p);} setShowNotifSettings(s=>!s); }} style={{ padding:"8px 16px", background:"rgba(26,26,26,0.05)", border:"0.5px solid rgba(26,26,26,0.09)", borderRadius:"12px", color:"rgba(26,26,26,0.5)", fontSize:"13px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>
+                  {showNotifSettings?"Done":"Configure"}
+                </button>
+              </div>
+              <div style={{ fontSize:"14px", fontWeight:500, color:"rgba(26,26,26,0.38)", lineHeight:1.6, marginBottom:showNotifSettings?"20px":"0" }}>
+                {notifPermission==="granted"?"Notifications are enabled.":notifPermission==="denied"?"Notifications are blocked — enable them in your browser settings.":"Enable notifications to get reminders and check-ins from Luma."}
+              </div>
+              {showNotifSettings&&(
+                <div style={{ display:"flex", flexDirection:"column", gap:"16px" }}>
+                  {/* Permission status */}
+                  <div style={{ display:"flex", alignItems:"center", gap:"10px", padding:"12px 16px", background:notifPermission==="granted"?"rgba(0,200,150,0.06)":"rgba(255,149,0,0.06)", border:`0.5px solid ${notifPermission==="granted"?"rgba(0,200,150,0.15)":"rgba(255,149,0,0.15)"}`, borderRadius:"14px" }}>
+                    <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:notifPermission==="granted"?"#00c896":"#ff9500", flexShrink:0 }} />
+                    <span style={{ fontSize:"14px", fontWeight:700, color:notifPermission==="granted"?"#00a87c":"#cc7a00" }}>
+                      {notifPermission==="granted"?"Permission granted — notifications active":notifPermission==="denied"?"Permission denied — check browser settings":"Permission not yet requested"}
+                    </span>
+                    {notifPermission!=="granted"&&notifPermission!=="denied"&&(
+                      <button onClick={async()=>{const p=await Notification.requestPermission();setNotifPermission(p);}} style={{ marginLeft:"auto", padding:"6px 12px", background:"linear-gradient(135deg,#00c896,#0ea5e9)", border:"none", borderRadius:"8px", color:"#fff", fontSize:"12px", fontWeight:800, cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Enable</button>
+                    )}
+                  </div>
+
+                  {/* Morning briefing */}
+                  <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: notifSettings.briefingEnabled?"14px":"0" }}>
+                      <div>
+                        <div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Morning Briefing</div>
+                        <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Daily reminder to open Luma and start your day</div>
+                      </div>
+                      <div className="toggle" style={{ background:notifSettings.briefingEnabled?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>{const e=!notifSettings.briefingEnabled;setNotifSettings(p=>({...p,briefingEnabled:e}));if(e&&notifSettings.briefingTime)scheduleDailyBriefingNotif(notifSettings.briefingTime,profile.name);}}>
+                        <div className="toggle-knob" style={{ left:notifSettings.briefingEnabled?"21px":"3px" }} />
+                      </div>
+                    </div>
+                    {notifSettings.briefingEnabled&&(
+                      <div>
+                        <label className="field-label">Notify me at</label>
+                        <input type="time" value={notifSettings.briefingTime||"08:00"} onChange={e=>{setNotifSettings(p=>({...p,briefingTime:e.target.value}));if(notifSettings.briefingEnabled)scheduleDailyBriefingNotif(e.target.value,profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600 }} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Gentle check-in */}
+                  <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:notifSettings.checkInEnabled?"14px":"0" }}>
+                      <div>
+                        <div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Gentle Check-in</div>
+                        <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Luma checks in with you once a day</div>
+                      </div>
+                      <div className="toggle" style={{ background:notifSettings.checkInEnabled?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>{const e=!notifSettings.checkInEnabled;setNotifSettings(p=>({...p,checkInEnabled:e}));if(e&&notifSettings.checkInHour)scheduleCheckIn(parseInt(notifSettings.checkInHour),profile.name);}}>
+                        <div className="toggle-knob" style={{ left:notifSettings.checkInEnabled?"21px":"3px" }} />
+                      </div>
+                    </div>
+                    {notifSettings.checkInEnabled&&(
+                      <div>
+                        <label className="field-label">Check in at</label>
+                        <select value={notifSettings.checkInHour||"14"} onChange={e=>{setNotifSettings(p=>({...p,checkInHour:e.target.value}));if(notifSettings.checkInEnabled)scheduleCheckIn(parseInt(e.target.value),profile.name);}} style={{ background:"rgba(255,255,255,0.9)", border:"0.5px solid rgba(26,26,26,0.1)", borderRadius:"10px", padding:"9px 12px", color:"#1a1a1a", fontSize:"15px", fontFamily:"'Nunito',sans-serif", fontWeight:600, appearance:"none", cursor:"pointer" }}>
+                          {[{value:"9",label:"9:00 AM"},{value:"11",label:"11:00 AM"},{value:"13",label:"1:00 PM"},{value:"14",label:"2:00 PM"},{value:"16",label:"4:00 PM"},{value:"18",label:"6:00 PM"},{value:"20",label:"8:00 PM"}].map(opt=><option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Task reminders toggle */}
+                  <div style={{ background:"rgba(245,242,238,0.8)", borderRadius:"16px", padding:"16px 18px" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <div>
+                        <div style={{ fontSize:"15px", fontWeight:800, color:"#1a1a1a", marginBottom:"2px" }}>Task Reminders</div>
+                        <div style={{ fontSize:"12px", fontWeight:500, color:"rgba(26,26,26,0.4)" }}>Notifications for individual task reminder times</div>
+                      </div>
+                      <div className="toggle" style={{ background:notifSettings.taskRemindersEnabled!==false?"linear-gradient(135deg,#00c896,#0ea5e9)":"rgba(26,26,26,0.12)" }} onClick={()=>setNotifSettings(p=>({...p,taskRemindersEnabled:p.taskRemindersEnabled===false?true:false}))}>
+                        <div className="toggle-knob" style={{ left:notifSettings.taskRemindersEnabled!==false?"21px":"3px" }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Test notification */}
+                  <button onClick={()=>{ if(notifPermission==="granted") new Notification("Hey from Luma!",{body:`Just making sure notifications are working for you${profile.name?`, ${profile.name}`:""}`,icon:"/favicon.ico",tag:"luma-test"}); }} style={{ padding:"12px", background:"rgba(26,26,26,0.04)", border:"0.5px solid rgba(26,26,26,0.08)", borderRadius:"14px", color:"rgba(26,26,26,0.45)", fontSize:"14px", fontWeight:700, cursor:"pointer", fontFamily:"'Nunito',sans-serif", width:"100%", transition:"all 0.2s" }}
+                    onMouseEnter={e=>{e.currentTarget.style.background="rgba(26,26,26,0.08)";e.currentTarget.style.color="rgba(26,26,26,0.7)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(26,26,26,0.04)";e.currentTarget.style.color="rgba(26,26,26,0.45)";}}>
+                    Send a test notification
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div style={{ textAlign:"center", marginTop:"24px", paddingBottom:"8px" }}>
               <button onClick={()=>{setShowOnboarding(true);setOnboardingStep(0);setOnboardingInput("");setOnboardingData({});}} style={{ fontSize:"13px", fontWeight:700, color:"rgba(26,26,26,0.22)", background:"none", border:"none", cursor:"pointer", fontFamily:"'Nunito',sans-serif" }}>Redo onboarding</button>
             </div>
